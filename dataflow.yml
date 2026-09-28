@@ -9,7 +9,7 @@ nodes:
       machine: pc
     path: nodes/pc/controller.py
     inputs:
-      tick: dora/timer/millis/20
+      tick: dora/timer/millis/100
     outputs:
       - control_cmd
 
@@ -20,16 +20,16 @@ nodes:
     inputs:
       control_cmd:
         source: controller/control_cmd
-        queue_size: 1
+        queue_size: 5
       bno_data:
         source: bno/bno_data
-        queue_size: 1
+        queue_size: 5
       esp_status:
         source: esp_bridge/esp_status
-        queue_size: 1
+        queue_size: 5
       esp_telemetry:
         source: esp_bridge/esp_telemetry
-        queue_size: 1
+        queue_size: 5
     outputs:
       - actuator_cmd
       - compute_status
@@ -41,22 +41,22 @@ nodes:
     inputs:
       image:
         source: camera/image
-        queue_size: 1
+        queue_size: 5
       bno_data:
         source: bno/bno_data
-        queue_size: 1
+        queue_size: 5
       control_cmd:
         source: controller/control_cmd
-        queue_size: 1
+        queue_size: 5
       compute_status:
         source: compute/compute_status
-        queue_size: 1
+        queue_size: 5
       esp_status:
         source: esp_bridge/esp_status
-        queue_size: 1
+        queue_size: 5
       esp_telemetry:
         source: esp_bridge/esp_telemetry
-        queue_size: 1
+        queue_size: 5
 
   # ============================================================
   # RASPBERRY PI NODES
@@ -87,7 +87,7 @@ nodes:
       tick: dora/timer/millis/20
       actuator_cmd:
         source: compute/actuator_cmd
-        queue_size: 1
+        queue_size: 5
     outputs:
       - esp_status
       - esp_telemetry

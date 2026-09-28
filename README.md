@@ -130,18 +130,18 @@ uv run dora trace view <TRACE_ID>
 
 ### A. PCローカルでの動作確認（実機がなくてもすぐテスト可能）
 
-ESPシミュレータと全ノードをPC上でまとめて動かせます。
+ESPシミュレータと全ノードをPC上でまとめて動かせます。Git Bash から以下を実行します：
 
-```powershell
+```bash
 # 1. 依存関係の同期 (初回のみ)
 uv sync
 
-# 2. ローカル実行 (PowerShellの場合)
-.\scripts\run_local.ps1
+# 2. ローカル実行 (Git Bash)
+./scripts/run_local.sh
 ```
 
-※ 手動で2つのターミナルを開いて起動する場合：
-```powershell
+※ 手動で別ターミナルから起動する場合：
+```bash
 # ターミナル1: ESP1 & ESP2 シミュレータの起動
 uv run python esp/esp_simulator.py
 
@@ -152,7 +152,7 @@ uv run dora run dataflow_local.yml --uv
 ### B. 実機分散運用（PC + Raspberry Pi）
 
 #### 1. Raspberry Pi 側の準備
-Raspberry Pi 上で本リポジトリを取得し、環境を同期します：
+Raspberry Pi 上で本リポジトリを取得し、環境を同期してデーモンを起動します：
 ```bash
 # ラズパイ側で実行
 uv sync
@@ -161,10 +161,11 @@ uv sync
 ./scripts/run_distributed_raspi.sh 192.168.1.50
 ```
 
-#### 2. PC 側の起動
-```powershell
-# PC側でコーディネーターとデーモンを起動
-uv run dora up
+#### 2. PC 側の起動 (Git Bash)
+PC の Git Bash で以下を実行します：
+```bash
+# コーディネーター起動
+./scripts/run_distributed_pc.sh
 
 # 分散データフローを開始
 uv run dora start dataflow.yml --name quadken

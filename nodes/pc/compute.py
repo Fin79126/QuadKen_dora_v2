@@ -11,6 +11,7 @@ Publishes:
   - compute_status: High-level calculation state for Rerun visualizer
 """
 
+import sys
 import time
 import json
 import math
@@ -103,101 +104,110 @@ def main():
     last_time = time.time()
     seq = 0
 
-    for event in node:
-        event_type = event["type"]
-        if event_type == "STOP":
-            print("[Compute] Received STOP event. Exiting.")
-            sys.exit(0)
+    try:
+        for event in node:
+            event_type = event["type"]
+            if event_type == "STOP":
+                print("[Compute] Received STOP event. Exiting.")
+                break
 
-        if event_type == "INPUT":
-            input_id = event["id"]
-            raw_value = event["value"]
+            if event_type == "INPUT":
+                input_id = event["id"]
+                raw_value = event["value"]
 
-            try:
-                # Value can be Arrow array of strings/bytes
-                raw_bytes = raw_value.to_pylist()[0]
-                if isinstance(raw_bytes, str):
-                    parsed_json = json.loads(raw_bytes)
+                try:
+                    # Value can be Arrow array of strings/bytes
+                    raw_bytes = raw_value.to_pylist()[0]
+                    if isinstance(raw_bytes, str):
+                        parsed_json = json.loads(raw_bytes)
+                    else:
+                        parsed_json = json.loads(raw_bytes.decode("utf-8"))
+                except Exception:
+                    parsed_json = {}
+
+                if input_id == "control_cmd":
+                    control_cmd.update(parsed_json)
+                elif input_id == "bno_data":
+                    bno_data.update(parsed_json)
+                elif input_id == "esp_status":
+                    esp_status.update(parsed_json)
+                elif input_id == "esp_telemetry":
+                    esp_telemetry.update(parsed_json)
+
+                # Only execute kinematics computation on IMU (bno_data) 50Hz clock,
+                # or when at least 20ms has elapsed, to prevent event flooding.
+                now = time.time()
+                if input_id != "bno_data" and (now - last_time < 0.02):
+                    continue
+
+                dt = max(0.005, min(0.1, now - last_time))
+                last_time = now
+
+                # Check E-Stop condition (software e-stop or ESP disconnected)
+                is_estop = control_cmd.get("e_stop", False)
+                esp1_connected = esp_status.get("esp1", {}).get("connected", False)
+                esp2_connected = esp_status.get("esp2", {}).get("connected", False)
+
+                if is_estop:
+                    robot_state = "EMERGENCY_STOP"
+                elif not esp1_connected or not esp2_connected:
+                    robot_state = "FAILSAFE_ESP_DISCONNECTED"
+                elif control_cmd.get("gait_mode", 0) == 0:
+                    robot_state = "STAND"
                 else:
-                    parsed_json = json.loads(raw_bytes.decode("utf-8"))
-            except Exception:
-                parsed_json = {}
+                    robot_state = "WALKING"
 
-            if input_id == "control_cmd":
-                control_cmd.update(parsed_json)
-            elif input_id == "bno_data":
-                bno_data.update(parsed_json)
-            elif input_id == "esp_status":
-                esp_status.update(parsed_json)
-            elif input_id == "esp_telemetry":
-                esp_telemetry.update(parsed_json)
+                # Posture compensation from IMU
+                roll_comp = -float(bno_data.get("roll", 0.0)) * 0.2
+                pitch_comp = -float(bno_data.get("pitch", 0.0)) * 0.2
 
-            # Compute loop triggered by control_cmd or timer
-            now = time.time()
-            dt = max(0.005, min(0.1, now - last_time))
-            last_time = now
+                if robot_state in ("EMERGENCY_STOP", "FAILSAFE_ESP_DISCONNECTED"):
+                    # Neutral safe position with motors disabled
+                    esp1_servos = [0.0] * 6
+                    esp1_motors = [0, 0]
+                    esp2_servos = [0.0] * 6
+                    esp2_motors = [0, 0]
+                else:
+                    esp1_servos, esp1_motors, esp2_servos, esp2_motors = kinematics.update_gait(
+                        dt=dt,
+                        vx=control_cmd.get("vx", 0.0),
+                        vyaw=control_cmd.get("vyaw", 0.0),
+                        height=control_cmd.get("body_height", 0.25),
+                        roll_comp=roll_comp,
+                        pitch_comp=pitch_comp,
+                    )
 
-            # Check E-Stop condition (software e-stop or ESP disconnected)
-            is_estop = control_cmd.get("e_stop", False)
-            esp1_connected = esp_status.get("esp1", {}).get("connected", False)
-            esp2_connected = esp_status.get("esp2", {}).get("connected", False)
+                seq += 1
+                actuator_cmd = {
+                    "seq": seq,
+                    "timestamp": now,
+                    "robot_state": robot_state,
+                    "esp1": {
+                        "servos": esp1_servos,
+                        "motors": esp1_motors,
+                    },
+                    "esp2": {
+                        "servos": esp2_servos,
+                        "motors": esp2_motors,
+                    },
+                }
 
-            if is_estop:
-                robot_state = "EMERGENCY_STOP"
-            elif not esp1_connected or not esp2_connected:
-                robot_state = "FAILSAFE_ESP_DISCONNECTED"
-            elif control_cmd.get("gait_mode", 0) == 0:
-                robot_state = "STAND"
-            else:
-                robot_state = "WALKING"
+                compute_status = {
+                    "seq": seq,
+                    "robot_state": robot_state,
+                    "phase": round(float(kinematics.phase), 2),
+                    "dt_ms": round(float(dt * 1000.0), 2),
+                    "esp1_connected": esp1_connected,
+                    "esp2_connected": esp2_connected,
+                }
 
-            # Posture compensation from IMU
-            roll_comp = -float(bno_data.get("roll", 0.0)) * 0.2
-            pitch_comp = -float(bno_data.get("pitch", 0.0)) * 0.2
-
-            if robot_state in ("EMERGENCY_STOP", "FAILSAFE_ESP_DISCONNECTED"):
-                # Neutral safe position with motors disabled
-                esp1_servos = [0.0] * 6
-                esp1_motors = [0, 0]
-                esp2_servos = [0.0] * 6
-                esp2_motors = [0, 0]
-            else:
-                esp1_servos, esp1_motors, esp2_servos, esp2_motors = kinematics.update_gait(
-                    dt=dt,
-                    vx=control_cmd.get("vx", 0.0),
-                    vyaw=control_cmd.get("vyaw", 0.0),
-                    height=control_cmd.get("body_height", 0.25),
-                    roll_comp=roll_comp,
-                    pitch_comp=pitch_comp,
-                )
-
-            seq += 1
-            actuator_cmd = {
-                "seq": seq,
-                "timestamp": now,
-                "robot_state": robot_state,
-                "esp1": {
-                    "servos": esp1_servos,
-                    "motors": esp1_motors,
-                },
-                "esp2": {
-                    "servos": esp2_servos,
-                    "motors": esp2_motors,
-                },
-            }
-
-            compute_status = {
-                "seq": seq,
-                "robot_state": robot_state,
-                "phase": round(float(kinematics.phase), 2),
-                "dt_ms": round(float(dt * 1000.0), 2),
-                "esp1_connected": esp1_connected,
-                "esp2_connected": esp2_connected,
-            }
-
-            # Send output to dora network
-            node.send_output("actuator_cmd", pa.array([json.dumps(actuator_cmd).encode("utf-8")]))
-            node.send_output("compute_status", pa.array([json.dumps(compute_status).encode("utf-8")]))
+                # Send output to dora network
+                node.send_output("actuator_cmd", pa.array([json.dumps(actuator_cmd).encode("utf-8")]))
+                node.send_output("compute_status", pa.array([json.dumps(compute_status).encode("utf-8")]))
+    except KeyboardInterrupt:
+        pass
+    finally:
+        sys.exit(0)
 
 
 if __name__ == "__main__":

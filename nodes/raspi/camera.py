@@ -6,6 +6,7 @@ Publishes:
   - image: Compressed JPEG byte stream
 """
 
+import sys
 import time
 import os
 import cv2
@@ -74,28 +75,38 @@ def main():
     cap = open_camera()
     frame_count = 0
 
-    for event in node:
-        event_type = event["type"]
-        if event_type == "STOP":
-            print("[Camera] Received STOP event. Exiting.")
-            sys.exit(0)
+    try:
+        for event in node:
+            event_type = event["type"]
+            if event_type == "STOP":
+                print("[Camera] Received STOP event. Exiting.")
+                break
 
-        if event_type == "INPUT":
-            frame_count += 1
-            if cap is not None:
-                ret, frame = cap.read()
-                if not ret or frame is None:
+            if event_type == "INPUT":
+                frame_count += 1
+                if cap is not None:
+                    ret, frame = cap.read()
+                    if not ret or frame is None:
+                        frame = generate_synthetic_frame(frame_count=frame_count)
+                else:
                     frame = generate_synthetic_frame(frame_count=frame_count)
-            else:
-                frame = generate_synthetic_frame(frame_count=frame_count)
 
-            # Compress to JPEG to minimize bandwidth across network
-            encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 75]
-            success, encoded_img = cv2.imencode(".jpg", frame, encode_param)
+                # Compress to JPEG to minimize bandwidth across network
+                encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 75]
+                success, encoded_img = cv2.imencode(".jpg", frame, encode_param)
 
-            if success:
-                jpeg_bytes = encoded_img.tobytes()
-                node.send_output("image", pa.array([jpeg_bytes]))
+                if success:
+                    jpeg_bytes = encoded_img.tobytes()
+                    node.send_output("image", pa.array([jpeg_bytes]))
+    except KeyboardInterrupt:
+        pass
+    finally:
+        if cap is not None and cap.isOpened():
+            try:
+                cap.release()
+            except Exception:
+                pass
+        sys.exit(0)
 
 
 if __name__ == "__main__":

@@ -137,6 +137,14 @@ class ESPConnectionHandler:
             "host": f"{self.host}:{self.tcp_port}",
         }
 
+    def close(self):
+        if self.tcp_sock:
+            try:
+                self.tcp_sock.close()
+            except Exception:
+                pass
+            self.tcp_sock = None
+
 
 def main():
     node = Node()
@@ -162,89 +170,103 @@ def main():
         print(f"[ESP Bridge] UDP bind notice: {e}")
 
     last_heartbeat_time = 0.0
+    last_status_pub_time = 0.0
 
     print(f"[ESP Bridge] Bridge initialized. Targeting ESP1 ({esp1_host}:{ESP1_CONFIG.tcp_port}) and ESP2 ({esp2_host}:{ESP2_CONFIG.tcp_port})")
 
-    for event in node:
-        event_type = event["type"]
-        if event_type == "STOP":
-            print("[ESP Bridge] Received STOP event. Exiting.")
-            sys.exit(0)
-
-        now = time.time()
-
-        # 1. Periodic TCP Heartbeat check (every 500ms)
-        if now - last_heartbeat_time > 0.5:
-            last_heartbeat_time = now
-            esp1.send_tcp_ping()
-            esp2.send_tcp_ping()
-
-        esp1.check_tcp_response()
-        esp2.check_tcp_response()
-
-        # 2. Check incoming UDP telemetry from ESPs
-        telemetry_batch = {}
-        while True:
-            try:
-                readable, _, _ = select.select([udp_sock], [], [], 0.0)
-                if not readable:
-                    break
-                data, addr = udp_sock.recvfrom(4096)
-                telemetry = json.loads(data.decode("utf-8"))
-                esp_id = telemetry.get("esp_id")
-                if esp_id:
-                    telemetry_batch[esp_id] = telemetry
-            except Exception:
+    try:
+        for event in node:
+            event_type = event["type"]
+            if event_type == "STOP":
+                print("[ESP Bridge] Received STOP event. Exiting.")
                 break
 
-        if telemetry_batch:
-            node.send_output(
-                "esp_telemetry", pa.array([json.dumps(telemetry_batch).encode("utf-8")])
-            )
+            now = time.time()
 
-        # 3. Handle Dora Inputs (Actuator commands from PC)
-        if event_type == "INPUT":
-            input_id = event["id"]
-            if input_id == "actuator_cmd":
+            # 1. Periodic TCP Heartbeat check (every 500ms)
+            if now - last_heartbeat_time > 0.5:
+                last_heartbeat_time = now
+                esp1.send_tcp_ping()
+                esp2.send_tcp_ping()
+
+            esp1.check_tcp_response()
+            esp2.check_tcp_response()
+
+            # 2. Check incoming UDP telemetry from ESPs
+            telemetry_batch = {}
+            while True:
                 try:
-                    raw_val = event["value"].to_pylist()[0]
-                    cmd_dict = json.loads(raw_val if isinstance(raw_val, str) else raw_val.decode("utf-8"))
+                    readable, _, _ = select.select([udp_sock], [], [], 0.0)
+                    if not readable:
+                        break
+                    data, addr = udp_sock.recvfrom(4096)
+                    telemetry = json.loads(data.decode("utf-8"))
+                    esp_id = telemetry.get("esp_id")
+                    if esp_id:
+                        telemetry_batch[esp_id] = telemetry
+                except Exception:
+                    break
 
-                    # Route actuator commands to ESP1 via UDP
-                    if "esp1" in cmd_dict:
-                        esp1_packet = {
-                            "seq": cmd_dict.get("seq", 0),
-                            "robot_state": cmd_dict.get("robot_state", "STAND"),
-                            "servos": cmd_dict["esp1"].get("servos", []),
-                            "motors": cmd_dict["esp1"].get("motors", []),
-                        }
-                        udp_sock.sendto(
-                            json.dumps(esp1_packet).encode("utf-8"),
-                            (esp1.host, esp1.udp_port),
-                        )
+            if telemetry_batch:
+                node.send_output(
+                    "esp_telemetry", pa.array([json.dumps(telemetry_batch).encode("utf-8")])
+                )
 
-                    # Route actuator commands to ESP2 via UDP
-                    if "esp2" in cmd_dict:
-                        esp2_packet = {
-                            "seq": cmd_dict.get("seq", 0),
-                            "robot_state": cmd_dict.get("robot_state", "STAND"),
-                            "servos": cmd_dict["esp2"].get("servos", []),
-                            "motors": cmd_dict["esp2"].get("motors", []),
-                        }
-                        udp_sock.sendto(
-                            json.dumps(esp2_packet).encode("utf-8"),
-                            (esp2.host, esp2.udp_port),
-                        )
-                except Exception as e:
-                    pass
+            # 3. Handle Dora Inputs (Actuator commands from PC)
+            if event_type == "INPUT":
+                input_id = event["id"]
+                if input_id == "actuator_cmd":
+                    try:
+                        raw_val = event["value"].to_pylist()[0]
+                        cmd_dict = json.loads(raw_val if isinstance(raw_val, str) else raw_val.decode("utf-8"))
 
-        # 4. Publish ESP connection status to dora
-        status_payload = {
-            "timestamp": now,
-            "esp1": esp1.get_status_dict(),
-            "esp2": esp2.get_status_dict(),
-        }
-        node.send_output("esp_status", pa.array([json.dumps(status_payload).encode("utf-8")]))
+                        # Route actuator commands to ESP1 via UDP
+                        if "esp1" in cmd_dict:
+                            esp1_packet = {
+                                "seq": cmd_dict.get("seq", 0),
+                                "robot_state": cmd_dict.get("robot_state", "STAND"),
+                                "servos": cmd_dict["esp1"].get("servos", []),
+                                "motors": cmd_dict["esp1"].get("motors", []),
+                            }
+                            udp_sock.sendto(
+                                json.dumps(esp1_packet).encode("utf-8"),
+                                (esp1.host, esp1.udp_port),
+                            )
+
+                        # Route actuator commands to ESP2 via UDP
+                        if "esp2" in cmd_dict:
+                            esp2_packet = {
+                                "seq": cmd_dict.get("seq", 0),
+                                "robot_state": cmd_dict.get("robot_state", "STAND"),
+                                "servos": cmd_dict["esp2"].get("servos", []),
+                                "motors": cmd_dict["esp2"].get("motors", []),
+                            }
+                            udp_sock.sendto(
+                                json.dumps(esp2_packet).encode("utf-8"),
+                                (esp2.host, esp2.udp_port),
+                            )
+                    except Exception as e:
+                        pass
+
+            # 4. Publish ESP connection status to dora (throttled to 10 Hz)
+            if now - last_status_pub_time >= 0.1:
+                last_status_pub_time = now
+                status_payload = {
+                    "timestamp": now,
+                    "esp1": esp1.get_status_dict(),
+                    "esp2": esp2.get_status_dict(),
+                }
+                node.send_output("esp_status", pa.array([json.dumps(status_payload).encode("utf-8")]))
+    except KeyboardInterrupt:
+        pass
+    finally:
+        esp1.close()
+        esp2.close()
+        try:
+            udp_sock.close()
+        except Exception:
+            pass
+        sys.exit(0)
 
 
 if __name__ == "__main__":
