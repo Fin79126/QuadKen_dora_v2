@@ -1,5 +1,5 @@
 """
-Shared configuration for QuadKen Dora v2.
+Shared configuration for QuadKen Dora v2 (Underwater Robot / AUV).
 Defines IP addresses, ports, protocol structures, and robot parameters.
 """
 
@@ -11,10 +11,10 @@ import json
 @dataclass
 class ESPConfig:
     esp_id: str          # "esp1" or "esp2"
-    name: str            # e.g. "Front Actuator Unit", "Rear Actuator Unit"
+    name: str            # e.g. "ESP1_ThrustSteer", "ESP2_Ballast"
     tcp_port: int        # TCP port for connection status & heartbeat
     udp_port: int        # UDP port for high-speed actuator commands & sensor telemetry
-    num_servos: int = 6  # Number of servos connected to this ESP
+    num_servos: int = 4  # Number of servos connected to this ESP
     num_motors: int = 2  # Number of motors connected to this ESP
 
 
@@ -22,29 +22,31 @@ class ESPConfig:
 DEFAULT_RASPI_IP = "127.0.0.1"  # Replace with RasPi IP in distributed mode (e.g., 192.168.1.100)
 DEFAULT_PC_IP = "127.0.0.1"     # Replace with PC IP in distributed mode (e.g., 192.168.1.50)
 
-# ESP Network settings (Default: 127.0.0.1 for local testing / simulator)
+# ESP1: Thrust & Drag-Steering Unit (2 BLDC Motors for forward propulsion + 4 Servos for membrane leg deployment)
 ESP1_CONFIG = ESPConfig(
     esp_id="esp1",
-    name="ESP1_Front",
+    name="ESP1_ThrustSteer",
     tcp_port=5001,
     udp_port=6001,
-    num_servos=6,
-    num_motors=2,
+    num_servos=4,  # 4 membrane deployment servos (Leg 1..4)
+    num_motors=2,  # 2 Forward BLDC thrusters
 )
 
+# ESP2: Ballast & Buoyancy Unit (4 Servos for head water intake / buoyancy adjustment)
 ESP2_CONFIG = ESPConfig(
     esp_id="esp2",
-    name="ESP2_Rear",
+    name="ESP2_Ballast",
     tcp_port=5002,
     udp_port=6002,
-    num_servos=6,
-    num_motors=2,
+    num_servos=4,  # 4 head water-intake ballast servos
+    num_motors=0,  # No thruster motors on ESP2
 )
 
 # Frequency & Timing
-CONTROL_LOOP_HZ = 50       # 50 Hz control loop (20ms interval)
+CONTROL_LOOP_HZ = 50          # 50 Hz control loop (20ms interval)
 HEARTBEAT_INTERVAL_SEC = 0.5  # TCP ping-pong every 500ms
-FAILSAFE_TIMEOUT_SEC = 1.0     # Trigger failsafe if no packet for 1.0s
+FAILSAFE_TIMEOUT_SEC = 1.0    # Trigger failsafe if no packet for 1.0s
+
 
 # Telemetry and Command Helpers
 def serialize_json(data: Any) -> bytes:

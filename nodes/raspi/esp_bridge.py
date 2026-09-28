@@ -236,7 +236,7 @@ def main():
                         if "esp1" in cmd_dict:
                             esp1_packet = {
                                 "seq": cmd_dict.get("seq", 0),
-                                "robot_state": cmd_dict.get("robot_state", "STAND"),
+                                "robot_state": cmd_dict.get("robot_state", "IDLE_HOVER"),
                                 "servos": cmd_dict["esp1"].get("servos", []),
                                 "motors": cmd_dict["esp1"].get("motors", []),
                             }
@@ -249,7 +249,7 @@ def main():
                         if "esp2" in cmd_dict:
                             esp2_packet = {
                                 "seq": cmd_dict.get("seq", 0),
-                                "robot_state": cmd_dict.get("robot_state", "STAND"),
+                                "robot_state": cmd_dict.get("robot_state", "IDLE_HOVER"),
                                 "servos": cmd_dict["esp2"].get("servos", []),
                                 "motors": cmd_dict["esp2"].get("motors", []),
                             }

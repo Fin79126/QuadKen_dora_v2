@@ -1,9 +1,13 @@
 """
-PC Controller Node
+PC Controller Node (QuadKen Underwater AUV)
 Reads joystick/gamepad inputs using Pygame.
-Provides keyboard / simulated fallback when no physical joystick is detected.
+Provides simulated fallback when no physical joystick is detected.
+Controls:
+  - Forward Propulsion: 2x BLDC Motors (Forward only: 0.0 to 1.0)
+  - Drag Steering: 4 Membrane-connected Legs (Yaw/Pitch/Roll via water resistance)
+  - Buoyancy / Ballast: 4 Head Water-Intake Servos
 Publishes:
-  - control_cmd: Command velocities, pose adjustments, gait mode, and E-Stop.
+  - control_cmd: Throttle, steering angles, ballast intake level, brake, and E-Stop.
 """
 
 import time
@@ -23,7 +27,6 @@ except ImportError:
 
 # Suppress Pygame welcome banner
 os.environ["PYGAME_HIDE_SUPPORT_PROMPT"] = "1"
-# Support Nintendo Switch Pro Controller over Bluetooth by skipping LED timeout packets
 os.environ["SDL_JOYSTICK_HIDAPI_SWITCH"] = "1"
 os.environ["SDL_JOYSTICK_HIDAPI_SWITCH_PLAYER_LED"] = "0"
 os.environ["SDL_JOYSTICK_HIDAPI_SWITCH_HOME_LED"] = "0"
@@ -41,7 +44,7 @@ def init_joystick():
             print(f"[Controller] Gamepad detected: {js.get_name()}")
             return js
         else:
-            print("[Controller] No physical gamepad detected. Using simulated/keyboard fallback mode.")
+            print("[Controller] No physical gamepad detected. Using simulated AUV cruising mode.")
             return None
     except Exception as e:
         print(f"[Controller] Gamepad initialization failed ({e}). Falling back to simulated mode.")
@@ -49,26 +52,19 @@ def init_joystick():
 
 
 def main():
-    # Initialize gamepad first so that Bluetooth HID connection is established BEFORE Dora starts ticking
     joystick = init_joystick()
-
     node = Node()
 
-    # Controller state variables
-    vx = 0.0          # Forward velocity (-1.0 to 1.0)
-    vy = 0.0          # Lateral velocity (-1.0 to 1.0)
-    vyaw = 0.0        # Turn velocity (-2.0 to 2.0)
-    body_height = 0.25 # Body nominal height (m)
-    roll = 0.0
-    pitch = 0.0
-    gait_mode = 1     # 0: IDLE/STAND, 1: WALK, 2: TROT
-    e_stop = False
+    # Underwater Controller state
+    throttle = 0.0      # Forward thrust (0.0 to 1.0, forward only)
+    steer_yaw = 0.0     # Turn steering via drag (-1.0 to 1.0: Left/Right)
+    steer_pitch = 0.0   # Pitch angle via drag (-1.0 to 1.0: Down/Up)
+    steer_roll = 0.0    # Roll angle via drag (-1.0 to 1.0)
+    ballast = 0.0       # Ballast intake (-1.0: Purge/Float, 0.0: Neutral, 1.0: Intake/Sink)
+    brake = False       # Full 4-leg deployment for water resistance braking
+    e_stop = False      # Emergency stop
     seq = 0
 
-    rate_hz = 10
-    dt = 1.0 / rate_hz
-
-    # Check if dataflow drives us via timer input, or we drive the loop
     try:
         for event in node:
             event_type = event["type"]
@@ -77,60 +73,68 @@ def main():
                 break
 
             if event_type == "INPUT":
-                # Can be triggered by timer tick (e.g. dora/timer/millis/20)
-                input_id = event["id"]
-
-                # Read Joystick inputs
                 pygame.event.pump()
                 _ = pygame.event.get()
                 raw_axes = []
+
                 if joystick is not None:
                     num_axes = joystick.get_numaxes()
                     raw_axes = [round(float(joystick.get_axis(i)), 3) for i in range(num_axes)]
 
-                    # Typical Xbox/Playstation/Switch mapping
-                    # Axis 0: Left Stick X, Axis 1: Left Stick Y (inverted)
-                    # Axis 2: Right Stick X, Axis 3: Right Stick Y
-                    raw_vx = -raw_axes[1] if num_axes > 1 else 0.0
-                    raw_vy = raw_axes[0] if num_axes > 0 else 0.0
-                    raw_vyaw = raw_axes[2] if num_axes > 2 else 0.0
-                    raw_pitch = -raw_axes[3] if num_axes > 3 else 0.0
+                    # Typical gamepad mapping:
+                    # Axis 1: Left Stick Y -> Throttle (forward-only: 0.0 to 1.0)
+                    raw_y = -raw_axes[1] if num_axes > 1 else 0.0
+                    raw_x = raw_axes[0] if num_axes > 0 else 0.0
+                    raw_rx = raw_axes[2] if num_axes > 2 else 0.0
+                    raw_ry = -raw_axes[3] if num_axes > 3 else 0.0
 
-                    # Deadband threshold
                     deadband = 0.08
-                    vx = raw_vx if abs(raw_vx) > deadband else 0.0
-                    vy = raw_vy if abs(raw_vy) > deadband else 0.0
-                    vyaw = raw_vyaw if abs(raw_vyaw) > deadband else 0.0
-                    pitch = raw_pitch * 0.3 if abs(raw_pitch) > deadband else 0.0
+                    # Forward-only propulsion: clamp negative (backward) to 0.0
+                    throttle = max(0.0, raw_y) if abs(raw_y) > deadband else 0.0
+                    steer_yaw = raw_rx if abs(raw_rx) > deadband else (raw_x if abs(raw_x) > deadband else 0.0)
+                    steer_pitch = raw_ry if abs(raw_ry) > deadband else 0.0
 
-                    # Check buttons
-                    # Button 0 (A/Cross): Toggle Gait
+                    # Buttons:
+                    # Button 0 (A): Toggle E-Stop
                     if joystick.get_numbuttons() > 0 and joystick.get_button(0):
-                        gait_mode = (gait_mode + 1) % 3
-                    # Button 1 (B/Circle): E-Stop toggle
-                    if joystick.get_numbuttons() > 1 and joystick.get_button(1):
                         e_stop = not e_stop
+                    # Button 2 (X): Water Brake (deploy all legs)
+                    brake = bool(joystick.get_button(2)) if joystick.get_numbuttons() > 2 else False
+
+                    # Triggers or Shoulder buttons for Ballast intake/purge
+                    if joystick.get_numbuttons() > 5:
+                        intake_btn = joystick.get_button(5)  # RB: Intake water (dive)
+                        purge_btn = joystick.get_button(4)   # LB: Purge water (surface)
+                        if intake_btn and not purge_btn:
+                            ballast = min(1.0, ballast + 0.05)
+                        elif purge_btn and not intake_btn:
+                            ballast = max(-1.0, ballast - 0.05)
                 else:
-                    # Simulated cyclic demonstration input when no physical joystick is attached
+                    # Simulated dynamic underwater cruising demonstration
                     t = time.time()
-                    vx = 0.3 * np.sin(0.5 * t)
-                    vy = 0.0
-                    vyaw = 0.2 * np.cos(0.3 * t)
-                    pitch = 0.05 * np.sin(0.8 * t)
-                    raw_axes = [round(float(vy), 3), round(float(-vx), 3), round(float(vyaw), 3), round(float(-pitch), 3)]
+                    # Forward cruising with periodic turns and ballast breathing
+                    throttle = 0.4 + 0.2 * np.sin(0.3 * t)
+                    steer_yaw = 0.5 * np.sin(0.4 * t)
+                    steer_pitch = 0.2 * np.cos(0.2 * t)
+                    ballast = 0.3 * np.sin(0.15 * t)
+                    brake = False
+                    raw_axes = [round(float(steer_yaw), 3), round(float(throttle), 3)]
 
                 seq += 1
                 cmd_payload = {
                     "seq": seq,
                     "timestamp": time.time(),
-                    "vx": round(float(vx), 3),
-                    "vy": round(float(vy), 3),
-                    "vyaw": round(float(vyaw), 3),
-                    "body_height": round(float(body_height), 3),
-                    "roll": round(float(roll), 3),
-                    "pitch": round(float(pitch), 3),
-                    "gait_mode": int(gait_mode),
+                    "throttle": round(float(throttle), 3),
+                    "steer_yaw": round(float(steer_yaw), 3),
+                    "steer_pitch": round(float(steer_pitch), 3),
+                    "steer_roll": round(float(steer_roll), 3),
+                    "ballast": round(float(ballast), 3),
+                    "brake": bool(brake),
                     "e_stop": bool(e_stop),
+                    # Compatibility aliases
+                    "vx": round(float(throttle), 3),
+                    "vyaw": round(float(steer_yaw), 3),
+                    "pitch": round(float(steer_pitch), 3),
                     "raw_axes": raw_axes,
                 }
 

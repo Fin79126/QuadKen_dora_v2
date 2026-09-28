@@ -1,12 +1,12 @@
 """
-PC Rerun Visualizer Node
+PC Rerun Visualizer Node (QuadKen Underwater AUV)
 Subscribes to all robot dataflow streams and visualizes them in Rerun:
-  - camera/image: 2D camera feed
+  - camera/image: 2D underwater camera feed
   - bno_data: 3D body orientation and gyro/accel time-series
-  - control_cmd: Command velocities and posture setpoints
-  - compute_status: State machine and gait phase
+  - control_cmd: Command velocities, steering setpoints, ballast level
+  - compute_status: AUV state, BLDC thrust, membrane leg deployment angles, ballast ratio
   - esp_status: TCP connection states and latency for ESP1 & ESP2
-  - esp_telemetry: UDP actuator feedback and telemetry
+  - esp_telemetry: UDP sensor readings and telemetry from ESP1 & ESP2
 """
 
 import os
@@ -67,13 +67,12 @@ def euler_to_quaternion(roll_deg: float, pitch_deg: float, yaw_deg: float):
 
 
 def main():
-    # Initialize Rerun first so that the GUI viewer is ready BEFORE connecting to Dora
-    rr.init("QuadKen_Dora_Telemetry", spawn=True)
+    rr.init("QuadKen_Underwater_Telemetry", spawn=True)
     try:
         rr.unregister_shutdown()
     except Exception:
         pass
-    print("[Visualizer] Rerun Viewer initialized.")
+    print("[Visualizer] Rerun Viewer initialized for QuadKen Underwater AUV.")
 
     node = Node()
 
@@ -90,20 +89,12 @@ def main():
 
                 input_id = event["id"]
                 raw_value = event["value"]
-                # Debug print for first few events of each type
-                if not hasattr(main, "_seen_inputs"):
-                    main._seen_inputs = set()
-                if input_id not in main._seen_inputs:
-                    main._seen_inputs.add(input_id)
-                    print(f"[Visualizer] First input received for: {input_id}")
 
-                # Handle Camera Images
+                # 1. Handle Camera Images (Underwater Feed)
                 if input_id == "image":
                     try:
-                        # Arrow array containing JPEG encoded bytes or raw array
                         img_data = raw_value.to_pylist()[0]
                         if isinstance(img_data, bytes):
-                            # Decode JPEG
                             nparr = np.frombuffer(img_data, np.uint8)
                             frame_bgr = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
                             if frame_bgr is not None:
@@ -115,7 +106,7 @@ def main():
                     except Exception as e:
                         print(f"[Visualizer] Camera log error: {e}")
 
-                # Handle BNO IMU Data
+                # 2. Handle BNO IMU Data (Underwater Orientation)
                 elif input_id == "bno_data":
                     try:
                         raw_bytes = raw_value.to_pylist()[0]
@@ -127,51 +118,41 @@ def main():
                         gyro = data.get("gyro", [0.0, 0.0, 0.0])
                         accel = data.get("accel", [0.0, 0.0, 9.81])
 
-                        # 3D Orientation transform
+                        # 3D Orientation transform for cylindrical hull
                         quat_xyzw = euler_to_quaternion(roll, pitch, yaw)
                         rr.log(
-                            "world/robot_base",
+                            "world/auv_hull",
                             rr.Transform3D(
                                 rotation=rr.Quaternion(xyzw=quat_xyzw),
-                                translation=[0.0, 0.0, 0.25],
+                                translation=[0.0, 0.0, -1.0],  # Underwater reference depth
                             ),
                         )
 
-                        # Time-series plots
-                        rr.log("imu/orientation/roll", rr_Scalar(roll))
-                        rr.log("imu/orientation/pitch", rr_Scalar(pitch))
-                        rr.log("imu/orientation/yaw", rr_Scalar(yaw))
-
-                        rr.log("imu/gyro/x", rr_Scalar(float(gyro[0])))
-                        rr.log("imu/gyro/y", rr_Scalar(float(gyro[1])))
-                        rr.log("imu/gyro/z", rr_Scalar(float(gyro[2])))
-
-                        rr.log("imu/accel/x", rr_Scalar(float(accel[0])))
-                        rr.log("imu/accel/y", rr_Scalar(float(accel[1])))
-                        rr.log("imu/accel/z", rr_Scalar(float(accel[2])))
+                        # Orientation & IMU plots
+                        rr.log("imu/roll", rr_Scalar(roll))
+                        rr.log("imu/pitch", rr_Scalar(pitch))
+                        rr.log("imu/yaw", rr_Scalar(yaw))
+                        rr.log("imu/gyro/yaw_rate", rr_Scalar(float(gyro[2])))
+                        rr.log("imu/accel/forward_x", rr_Scalar(float(accel[0])))
                     except Exception as e:
                         print(f"[Visualizer] BNO log error: {e}")
 
-                # Handle Controller Commands
+                # 3. Handle Controller Commands
                 elif input_id == "control_cmd":
                     try:
                         raw_bytes = raw_value.to_pylist()[0]
                         cmd = json.loads(raw_bytes if isinstance(raw_bytes, str) else raw_bytes.decode("utf-8"))
 
-                        rr.log("control/cmd_vel/vx", rr_Scalar(float(cmd.get("vx", 0.0))))
-                        rr.log("control/cmd_vel/vy", rr_Scalar(float(cmd.get("vy", 0.0))))
-                        rr.log("control/cmd_vel/vyaw", rr_Scalar(float(cmd.get("vyaw", 0.0))))
-                        rr.log("control/gait_mode", rr_Scalar(int(cmd.get("gait_mode", 0))))
+                        rr.log("control/throttle", rr_Scalar(float(cmd.get("throttle", cmd.get("vx", 0.0)))))
+                        rr.log("control/steer_yaw", rr_Scalar(float(cmd.get("steer_yaw", cmd.get("vyaw", 0.0)))))
+                        rr.log("control/steer_pitch", rr_Scalar(float(cmd.get("steer_pitch", cmd.get("pitch", 0.0)))))
+                        rr.log("control/ballast_cmd", rr_Scalar(float(cmd.get("ballast", 0.0))))
+                        rr.log("control/brake", rr_Scalar(1.0 if cmd.get("brake", False) else 0.0))
                         rr.log("control/e_stop", rr_Scalar(1.0 if cmd.get("e_stop", False) else 0.0))
-
-                        # Log raw joystick axes for hardware/stick testing
-                        raw_axes = cmd.get("raw_axes", [])
-                        for i, val in enumerate(raw_axes):
-                            rr.log(f"joystick/raw_axis_{i}", rr_Scalar(float(val)))
                     except Exception as e:
                         print(f"[Visualizer] Controller log error: {e}")
 
-                # Handle ESP Status (TCP connection states & Latency)
+                # 4. Handle ESP Status (TCP Health & Latency)
                 elif input_id == "esp_status":
                     try:
                         raw_bytes = raw_value.to_pylist()[0]
@@ -179,19 +160,16 @@ def main():
 
                         esp1_conn = 1.0 if status.get("esp1", {}).get("connected", False) else 0.0
                         esp2_conn = 1.0 if status.get("esp2", {}).get("connected", False) else 0.0
-                        esp1_rtt = float(status.get("esp1", {}).get("latency_ms", 0.0))
-                        esp2_rtt = float(status.get("esp2", {}).get("latency_ms", 0.0))
-
-                        rr.log("tcp_status/esp1/connected", rr_Scalar(esp1_conn))
-                        rr.log("tcp_status/esp2/connected", rr_Scalar(esp2_conn))
-                        rr.log("tcp_status/esp1/latency_ms", rr_Scalar(esp1_rtt))
-                        rr.log("tcp_status/esp2/latency_ms", rr_Scalar(esp2_rtt))
-                        rr.log("status_text/esp1", rr.TextLog(f"ESP1: {status.get('esp1', {}).get('state', 'UNKNOWN')}"))
-                        rr.log("status_text/esp2", rr.TextLog(f"ESP2: {status.get('esp2', {}).get('state', 'UNKNOWN')}"))
+                        rr.log("tcp_health/esp1_connected", rr_Scalar(esp1_conn))
+                        rr.log("tcp_health/esp2_connected", rr_Scalar(esp2_conn))
+                        rr.log("tcp_health/esp1_latency_ms", rr_Scalar(float(status.get("esp1", {}).get("latency_ms", 0.0))))
+                        rr.log("tcp_health/esp2_latency_ms", rr_Scalar(float(status.get("esp2", {}).get("latency_ms", 0.0))))
+                        rr.log("status_text/esp1", rr.TextLog(f"ESP1 (Thrust/Steer): {status.get('esp1', {}).get('state', 'UNKNOWN')}"))
+                        rr.log("status_text/esp2", rr.TextLog(f"ESP2 (Ballast): {status.get('esp2', {}).get('state', 'UNKNOWN')}"))
                     except Exception as e:
                         print(f"[Visualizer] ESP status log error: {e}")
 
-                # Handle ESP Telemetry (UDP sensor feedback)
+                # 5. Handle ESP Telemetry (Sensors, Voltage, Actual Actuator feedback)
                 elif input_id == "esp_telemetry":
                     try:
                         raw_bytes = raw_value.to_pylist()[0]
@@ -199,21 +177,37 @@ def main():
 
                         if "esp1" in telemetry:
                             t1 = telemetry["esp1"]
-                            rr.log("esp1/voltage", rr_Scalar(float(t1.get("voltage", 12.0))))
-                            rr.log("esp1/current", rr_Scalar(float(t1.get("current", 0.5))))
+                            rr.log("power/esp1_voltage", rr_Scalar(float(t1.get("voltage", 12.0))))
+                            rr.log("power/esp1_current", rr_Scalar(float(t1.get("current", 0.5))))
                         if "esp2" in telemetry:
                             t2 = telemetry["esp2"]
-                            rr.log("esp2/voltage", rr_Scalar(float(t2.get("voltage", 12.0))))
-                            rr.log("esp2/current", rr_Scalar(float(t2.get("current", 0.5))))
+                            rr.log("power/esp2_voltage", rr_Scalar(float(t2.get("voltage", 12.0))))
+                            rr.log("power/esp2_current", rr_Scalar(float(t2.get("current", 0.5))))
+                            if "water_depth_m" in t2:
+                                rr.log("sensor/water_depth_m", rr_Scalar(float(t2["water_depth_m"])))
                     except Exception as e:
                         print(f"[Visualizer] ESP telemetry log error: {e}")
 
-                # Handle Compute Status
+                # 6. Handle Compute Status (Actuator Allocations & State Machine)
                 elif input_id == "compute_status":
                     try:
                         raw_bytes = raw_value.to_pylist()[0]
                         c_status = json.loads(raw_bytes if isinstance(raw_bytes, str) else raw_bytes.decode("utf-8"))
-                        rr.log("status_text/robot_state", rr.TextLog(f"State: {c_status.get('robot_state', 'UNKNOWN')}"))
+
+                        rr.log("status_text/robot_state", rr.TextLog(f"AUV State: {c_status.get('robot_state', 'UNKNOWN')}"))
+                        rr.log("actuators/bldc_thrust_pwm", rr_Scalar(float(c_status.get("throttle_pct", 0))))
+
+                        # Log 4 membrane leg deployment angles (degrees)
+                        leg_angles = c_status.get("leg_deploy_angles", [0.0, 0.0, 0.0, 0.0])
+                        if len(leg_angles) >= 4:
+                            rr.log("actuators/legs/0_top_deploy_deg", rr_Scalar(float(leg_angles[0])))
+                            rr.log("actuators/legs/1_right_deploy_deg", rr_Scalar(float(leg_angles[1])))
+                            rr.log("actuators/legs/2_bottom_deploy_deg", rr_Scalar(float(leg_angles[2])))
+                            rr.log("actuators/legs/3_left_deploy_deg", rr_Scalar(float(leg_angles[3])))
+
+                        # Log head ballast intake
+                        rr.log("actuators/ballast/fill_ratio", rr_Scalar(float(c_status.get("ballast_fill_ratio", 0.5))))
+                        rr.log("actuators/ballast/servo_deg", rr_Scalar(float(c_status.get("ballast_intake_deg", 0.0))))
                         rr.log("compute/dt_ms", rr_Scalar(float(c_status.get("dt_ms", 0.0))))
                     except Exception as e:
                         print(f"[Visualizer] Compute status log error: {e}")
