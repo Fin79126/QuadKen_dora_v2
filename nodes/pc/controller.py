@@ -49,8 +49,10 @@ def init_joystick():
 
 
 def main():
-    node = Node()
+    # Initialize gamepad first so that Bluetooth HID connection is established BEFORE Dora starts ticking
     joystick = init_joystick()
+
+    node = Node()
 
     # Controller state variables
     vx = 0.0          # Forward velocity (-1.0 to 1.0)

@@ -9,9 +9,11 @@ Subscribes to all robot dataflow streams and visualizes them in Rerun:
   - esp_telemetry: UDP actuator feedback and telemetry
 """
 
+import os
 import sys
 import time
 import json
+import socket
 import cv2
 import numpy as np
 import pyarrow as pa
@@ -20,6 +22,27 @@ from dora import Node
 
 # Rerun archetype compatibility (Rerun 0.20+ uses Scalars instead of Scalar)
 rr_Scalar = getattr(rr, "Scalars", getattr(rr, "Scalar", None))
+
+_last_viewer_check = 0.0
+_viewer_alive = True
+
+
+def check_viewer_alive() -> bool:
+    """Check if Rerun Viewer gRPC server is responsive."""
+    global _last_viewer_check, _viewer_alive
+    now = time.time()
+    if now - _last_viewer_check < 0.5:
+        return _viewer_alive
+    _last_viewer_check = now
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(0.02)
+        res = s.connect_ex(("127.0.0.1", 9876))
+        s.close()
+        _viewer_alive = (res == 0)
+    except Exception:
+        _viewer_alive = False
+    return _viewer_alive
 
 
 def euler_to_quaternion(roll_deg: float, pitch_deg: float, yaw_deg: float):
@@ -62,6 +85,9 @@ def main():
                 break
 
             if event_type == "INPUT":
+                if not check_viewer_alive():
+                    continue
+
                 input_id = event["id"]
                 raw_value = event["value"]
                 # Debug print for first few events of each type
@@ -194,11 +220,7 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
-        try:
-            rr.disconnect()
-        except Exception:
-            pass
-        sys.exit(0)
+        os._exit(0)
 
 
 if __name__ == "__main__":

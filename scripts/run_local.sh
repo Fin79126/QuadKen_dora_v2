@@ -30,4 +30,4 @@ sleep 1
 
 # 2. Launch Dora Dataflow
 echo "[2/2] Launching Dora Dataflow..."
-uv run dora run dataflow_local.yml --uv
+uv run dora run dataflow_local.yml --uv --log-filter "camera=error"
