@@ -1,0 +1,80 @@
+# Local Dataflow for QuadKen (Runs all nodes on PC for development and testing)
+nodes:
+  # ============================================================
+  # PC NODES
+  # ============================================================
+  - id: controller
+    path: nodes/pc/controller.py
+    inputs:
+      tick: dora/timer/millis/20
+    outputs:
+      - control_cmd
+
+  - id: compute
+    path: nodes/pc/compute.py
+    inputs:
+      control_cmd:
+        source: controller/control_cmd
+        queue_size: 1
+      bno_data:
+        source: bno/bno_data
+        queue_size: 1
+      esp_status:
+        source: esp_bridge/esp_status
+        queue_size: 1
+      esp_telemetry:
+        source: esp_bridge/esp_telemetry
+        queue_size: 1
+    outputs:
+      - actuator_cmd
+      - compute_status
+
+  - id: visualizer
+    path: nodes/pc/visualizer.py
+    inputs:
+      image:
+        source: camera/image
+        queue_size: 1
+      bno_data:
+        source: bno/bno_data
+        queue_size: 1
+      control_cmd:
+        source: controller/control_cmd
+        queue_size: 1
+      compute_status:
+        source: compute/compute_status
+        queue_size: 1
+      esp_status:
+        source: esp_bridge/esp_status
+        queue_size: 1
+      esp_telemetry:
+        source: esp_bridge/esp_telemetry
+        queue_size: 1
+
+  # ============================================================
+  # RASPBERRY PI NODES (Simulated locally)
+  # ============================================================
+  - id: camera
+    path: nodes/raspi/camera.py
+    inputs:
+      tick: dora/timer/millis/40
+    outputs:
+      - image
+
+  - id: bno
+    path: nodes/raspi/bno.py
+    inputs:
+      tick: dora/timer/millis/20
+    outputs:
+      - bno_data
+
+  - id: esp_bridge
+    path: nodes/raspi/esp_bridge.py
+    inputs:
+      tick: dora/timer/millis/20
+      actuator_cmd:
+        source: compute/actuator_cmd
+        queue_size: 1
+    outputs:
+      - esp_status
+      - esp_telemetry

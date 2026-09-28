@@ -1,0 +1,93 @@
+# Distributed Dataflow for QuadKen (PC <-> Raspberry Pi)
+# Uses dora-rs to orchestrate nodes across PC and Raspberry Pi.
+nodes:
+  # ============================================================
+  # PC NODES
+  # ============================================================
+  - id: controller
+    deploy:
+      machine: pc
+    path: nodes/pc/controller.py
+    inputs:
+      tick: dora/timer/millis/20
+    outputs:
+      - control_cmd
+
+  - id: compute
+    deploy:
+      machine: pc
+    path: nodes/pc/compute.py
+    inputs:
+      control_cmd:
+        source: controller/control_cmd
+        queue_size: 1
+      bno_data:
+        source: bno/bno_data
+        queue_size: 1
+      esp_status:
+        source: esp_bridge/esp_status
+        queue_size: 1
+      esp_telemetry:
+        source: esp_bridge/esp_telemetry
+        queue_size: 1
+    outputs:
+      - actuator_cmd
+      - compute_status
+
+  - id: visualizer
+    deploy:
+      machine: pc
+    path: nodes/pc/visualizer.py
+    inputs:
+      image:
+        source: camera/image
+        queue_size: 1
+      bno_data:
+        source: bno/bno_data
+        queue_size: 1
+      control_cmd:
+        source: controller/control_cmd
+        queue_size: 1
+      compute_status:
+        source: compute/compute_status
+        queue_size: 1
+      esp_status:
+        source: esp_bridge/esp_status
+        queue_size: 1
+      esp_telemetry:
+        source: esp_bridge/esp_telemetry
+        queue_size: 1
+
+  # ============================================================
+  # RASPBERRY PI NODES
+  # ============================================================
+  - id: camera
+    deploy:
+      machine: raspi
+    path: nodes/raspi/camera.py
+    inputs:
+      tick: dora/timer/millis/40
+    outputs:
+      - image
+
+  - id: bno
+    deploy:
+      machine: raspi
+    path: nodes/raspi/bno.py
+    inputs:
+      tick: dora/timer/millis/20
+    outputs:
+      - bno_data
+
+  - id: esp_bridge
+    deploy:
+      machine: raspi
+    path: nodes/raspi/esp_bridge.py
+    inputs:
+      tick: dora/timer/millis/20
+      actuator_cmd:
+        source: compute/actuator_cmd
+        queue_size: 1
+    outputs:
+      - esp_status
+      - esp_telemetry

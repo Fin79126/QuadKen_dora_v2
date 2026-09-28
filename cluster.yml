@@ -1,0 +1,18 @@
+# Dora Cluster Configuration for Multi-Machine Deployment
+# Replace with the actual IP addresses of your PC and Raspberry Pi.
+
+coordinator:
+  addr: 127.0.0.1  # Set to PC's IP address (e.g., 192.168.1.50)
+
+machines:
+  - id: pc
+    host: 127.0.0.1  # PC IP address
+    user: tacky      # PC username
+    # ssh:
+    #   port: 22
+
+  - id: raspi
+    host: 192.168.1.100  # Raspberry Pi IP address
+    user: pi             # Raspberry Pi username
+    # ssh:
+    #   port: 22
