@@ -46,7 +46,7 @@ class ESPConnectionHandler:
         self._lock = threading.Lock()
 
     def connect_tcp(self) -> bool:
-        """Attempt non-blocking/short-timeout TCP connection to ESP."""
+        """Attempt non-blocking TCP connection to ESP."""
         try:
             if self.tcp_sock:
                 try:
@@ -55,14 +55,23 @@ class ESPConnectionHandler:
                     pass
 
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(0.3)
-            s.connect((self.host, self.tcp_port))
             s.setblocking(False)
-            self.tcp_sock = s
-            self.connected = True
-            self.state_string = "CONNECTED"
-            self.last_pong_time = time.time()
-            return True
+            err = s.connect_ex((self.host, self.tcp_port))
+            if err == 0:
+                self.tcp_sock = s
+                self.connected = True
+                self.state_string = "CONNECTED"
+                self.last_pong_time = time.time()
+                return True
+            else:
+                try:
+                    s.close()
+                except Exception:
+                    pass
+                self.connected = False
+                self.state_string = "DISCONNECTED"
+                self.tcp_sock = None
+                return False
         except Exception:
             self.connected = False
             self.state_string = "DISCONNECTED"
@@ -71,8 +80,11 @@ class ESPConnectionHandler:
 
     def send_tcp_ping(self):
         """Send heartbeat ping over TCP."""
+        now = time.time()
         if not self.tcp_sock:
-            self.connect_tcp()
+            if now - getattr(self, "last_connect_time", 0.0) >= 1.0:
+                self.last_connect_time = now
+                self.connect_tcp()
             return
 
         try:

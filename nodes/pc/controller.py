@@ -23,8 +23,10 @@ except ImportError:
 
 # Suppress Pygame welcome banner
 os.environ["PYGAME_HIDE_SUPPORT_PROMPT"] = "1"
-# Disable SDL HIDAPI mode to support Nintendo Switch Pro Controller and other USB gamepads on Windows
-os.environ["SDL_JOYSTICK_HIDAPI"] = "0"
+# Support Nintendo Switch Pro Controller over Bluetooth by skipping LED timeout packets
+os.environ["SDL_JOYSTICK_HIDAPI_SWITCH"] = "1"
+os.environ["SDL_JOYSTICK_HIDAPI_SWITCH_PLAYER_LED"] = "0"
+os.environ["SDL_JOYSTICK_HIDAPI_SWITCH_HOME_LED"] = "0"
 import pygame
 
 
@@ -78,6 +80,7 @@ def main():
 
                 # Read Joystick inputs
                 pygame.event.pump()
+                _ = pygame.event.get()
                 raw_axes = []
                 if joystick is not None:
                     num_axes = joystick.get_numaxes()
