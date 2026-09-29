@@ -64,6 +64,9 @@ nodes:
   # ============================================================
   - id: mujoco_sim
     path: nodes/simulation/mujoco_node.py
+    env:
+      BALLOON_RANDOM_SPAWN: "true"
+      BALLOON_RESPAWN_MODE: "batch"
     inputs:
       tick: dora/timer/millis/20
       actuator_cmd:

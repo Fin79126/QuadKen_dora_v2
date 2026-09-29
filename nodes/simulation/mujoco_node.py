@@ -58,7 +58,7 @@ def quat_to_euler_deg(w, x, y, z):
 
 
 class QuadKenMuJoCoSim:
-    def __init__(self, xml_path=MODEL_PATH):
+    def __init__(self, xml_path=MODEL_PATH, random_spawn=None, respawn_mode=None):
         if not os.path.exists(xml_path):
             raise FileNotFoundError(f"MuJoCo XML model not found at: {xml_path}")
 
@@ -157,6 +157,18 @@ class QuadKenMuJoCoSim:
         self.last_pop_time = 0.0
         self.is_surfaced = False
 
+        # Random balloon spawn settings
+        if random_spawn is None:
+            env_rnd = os.getenv("BALLOON_RANDOM_SPAWN", "1").strip().lower()
+            self.random_spawn = env_rnd not in ("0", "false", "no", "off")
+        else:
+            self.random_spawn = bool(random_spawn)
+
+        if respawn_mode is None:
+            self.respawn_mode = os.getenv("BALLOON_RESPAWN_MODE", "batch").strip().lower()
+        else:
+            self.respawn_mode = respawn_mode.strip().lower()
+
         # Current target index & backward compatibility properties
         self.current_waypoint_idx = 0
         self.balloon_waypoints = [b["init_pos"].tolist() for b in self.balloons]
@@ -169,6 +181,79 @@ class QuadKenMuJoCoSim:
             self.balloon_body_id = -1
             self.balloon_geom_id = -1
             self.balloon_mocap_id = -1
+
+        # Apply initial random placement if enabled
+        if self.random_spawn:
+            self.randomize_all_balloons()
+        else:
+            self._update_nearest_target()
+
+    def generate_random_balloon_pos(self, min_dist_to_robot=2.5, min_dist_to_others=2.0) -> np.ndarray:
+        """
+        Generate a random 3D position inside the safe pool boundary.
+        Pool Arena: X in [3.5, 26.0], Y in [-7.5, 7.5], Z in [-2.8, -1.0].
+        Ensures clearance from robot nose and existing active balloons.
+        """
+        p_robot = self.data.qpos[0:3]
+        candidate = np.zeros(3, dtype=np.float64)
+        for _ in range(200):
+            x = float(np.random.uniform(3.5, 26.0))
+            y = float(np.random.uniform(-7.5, 7.5))
+            z = float(np.random.uniform(-2.8, -1.0))
+            candidate = np.array([x, y, z], dtype=np.float64)
+
+            # Avoid spawning right on top of robot
+            if np.linalg.norm(candidate - p_robot) < min_dist_to_robot:
+                continue
+
+            # Check distance to already active balloons
+            too_close = False
+            for b in self.balloons:
+                if not b["popped"] and b["mocap_id"] != -1:
+                    b_pos = self.data.mocap_pos[b["mocap_id"]]
+                    if b_pos[2] > -10.0 and np.linalg.norm(candidate - b_pos) < min_dist_to_others:
+                        too_close = True
+                        break
+            if not too_close:
+                return candidate
+        return candidate
+
+    def randomize_all_balloons(self):
+        """Randomize positions of all 10 target balloons across the pool arena."""
+        for b in self.balloons:
+            b["popped"] = False
+            new_pos = self.generate_random_balloon_pos()
+            b["init_pos"] = new_pos.copy()
+            if b["mocap_id"] != -1:
+                self.data.mocap_pos[b["mocap_id"]] = new_pos.copy()
+
+        self.balloon_waypoints = [b["init_pos"].tolist() for b in self.balloons]
+        self._update_nearest_target()
+        mujoco.mj_forward(self.model, self.data)
+        print(f"[MuJoCo Node] ★ Randomized positions for {len(self.balloons)} balloons across the pool arena.")
+
+    def _update_nearest_target(self, p_nose=None):
+        """Update self.current_waypoint_idx to the active balloon closest to nose."""
+        if not self.balloons:
+            return
+        if p_nose is None:
+            rot_mat = np.zeros(9, dtype=np.float64)
+            mujoco.mju_quat2Mat(rot_mat, self.data.qpos[3:7])
+            rot_mat = rot_mat.reshape((3, 3))
+            p_nose = self.data.qpos[0:3] + rot_mat @ np.array([0.72, 0.0, 0.0])
+
+        active_list = [b for b in self.balloons if not b["popped"]]
+        if active_list:
+            dists = [np.linalg.norm(self.data.mocap_pos[b["mocap_id"]] - p_nose) for b in active_list]
+            nearest = active_list[int(np.argmin(dists))]
+            self.current_waypoint_idx = nearest["idx"]
+        else:
+            self.current_waypoint_idx = 0
+
+        target_b = self.balloons[self.current_waypoint_idx]
+        self.balloon_body_id = target_b["body_id"]
+        self.balloon_geom_id = target_b["geom_id"]
+        self.balloon_mocap_id = target_b["mocap_id"]
 
     def set_actuator_commands(self, cmd_dict):
         """Parse actuator_cmd from pc/compute.py."""
@@ -378,36 +463,39 @@ class QuadKenMuJoCoSim:
             self.last_sim_pop_time = sim_time
             hit_balloon["popped"] = True
 
-            # Move popped balloon deep under floor out of view
-            self.data.mocap_pos[hit_balloon["mocap_id"]] = [
-                hit_balloon["init_pos"][0],
-                hit_balloon["init_pos"][1],
-                -50.0,
-            ]
-
             active_remaining = sum(1 for b in self.balloons if not b["popped"])
             print(f"\n[MuJoCo Node] *******************************************")
             print(f"[MuJoCo Node] *** BALLOON #{hit_balloon['idx']} POPPED! Count: {self.balloon_pop_count} (Remaining: {active_remaining}/10) ***")
             print(f"[MuJoCo Node] *******************************************\n")
 
-            if active_remaining == 0:
-                print("\n[MuJoCo Node] ★★★ ALL 10 BALLOONS DESTROYED! RESPAWNING ALL! ★★★\n")
-                for b in self.balloons:
-                    b["popped"] = False
-                    self.data.mocap_pos[b["mocap_id"]] = b["init_pos"].copy()
-                self.current_waypoint_idx = 0
+            if self.respawn_mode == "instant":
+                # Instant random respawn mode: respawn popped balloon immediately at a new random pool coordinate
+                new_pos = self.generate_random_balloon_pos()
+                hit_balloon["init_pos"] = new_pos.copy()
+                hit_balloon["popped"] = False
+                self.data.mocap_pos[hit_balloon["mocap_id"]] = new_pos.copy()
+                print(f"[MuJoCo Node] ★ Balloon #{hit_balloon['idx']} instantly respawned at [{new_pos[0]:.2f}, {new_pos[1]:.2f}, {new_pos[2]:.2f}]")
+                self._update_nearest_target(p_nose)
             else:
-                # Find nearest active balloon to nose
-                active_list = [b for b in self.balloons if not b["popped"]]
-                dists = [np.linalg.norm(self.data.mocap_pos[b["mocap_id"]] - p_nose) for b in active_list]
-                nearest = active_list[int(np.argmin(dists))]
-                self.current_waypoint_idx = nearest["idx"]
+                # Batch respawn mode: hide popped balloon deep under floor
+                self.data.mocap_pos[hit_balloon["mocap_id"]] = [
+                    hit_balloon["init_pos"][0],
+                    hit_balloon["init_pos"][1],
+                    -50.0,
+                ]
 
-            # Update legacy attributes to current target
-            target_b = self.balloons[self.current_waypoint_idx]
-            self.balloon_body_id = target_b["body_id"]
-            self.balloon_geom_id = target_b["geom_id"]
-            self.balloon_mocap_id = target_b["mocap_id"]
+                if active_remaining == 0:
+                    print("\n[MuJoCo Node] ★★★ ALL 10 BALLOONS DESTROYED! RESPAWNING ALL! ★★★\n")
+                    if self.random_spawn:
+                        self.randomize_all_balloons()
+                    else:
+                        for b in self.balloons:
+                            b["popped"] = False
+                            self.data.mocap_pos[b["mocap_id"]] = b["init_pos"].copy()
+                        self._update_nearest_target()
+                else:
+                    self._update_nearest_target(p_nose)
+
             mujoco.mj_forward(self.model, self.data)
 
     def step(self):

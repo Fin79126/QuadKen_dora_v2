@@ -14,4 +14,7 @@ echo "  - Closed-loop Drag-Steering & Thrust Control"
 echo "  - Rerun 3D Telemetry Visualizer"
 echo ""
 
+export BALLOON_RANDOM_SPAWN="${BALLOON_RANDOM_SPAWN:-1}"
+export BALLOON_RESPAWN_MODE="${BALLOON_RESPAWN_MODE:-batch}"
+
 uv run dora run dataflow_mujoco.yml --uv
