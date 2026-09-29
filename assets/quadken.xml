@@ -3,11 +3,12 @@
     QuadKen AUV (Autonomous Underwater Vehicle)
     Specifications:
       - Main Cylindrical Hull: Diameter 0.24m (radius 0.12m), Length 0.70m, Weight ~8.0kg
-      - 4 Legs: Length 0.30m, Opening angle 0-90 degrees at bottom rim (Total length with legs ~1.00m)
-      - Translucent Drag-Steering Membranes connected between legs
-      - Dual BLDC Thrusters: Diameter 0.04m (radius 0.02m), tandem in-line inside the 4 legs, counter-rotating to cancel torque
+      - 4 Legs: Length 0.30m, Opening angle 0-90 degrees (Inner to Outer deployment)
+      - Translucent Drag-Steering Membranes attached to legs
+      - Dual BLDC Thrusters: Diameter 0.04m, tandem in-line inside the 4 legs, counter-rotating to cancel torque
       - Head Ballast System: 4 water-intake servos at the front dome
       - Net Positive Buoyancy: Slight positive buoyancy (~+0.3kgf) with nose-up pitch trim
+      - Supports 3D Roll / Pitch / Yaw rotation
   -->
 
   <compiler angle="degree" coordinate="local" inertiafromgeom="auto"/>
@@ -24,17 +25,13 @@
   <default>
     <joint damping="0.8" armature="0.01"/>
     <geom condim="3" friction="0.8 0.1 0.1"/>
-    <!-- Default for Leg joints -->
+    <!-- Default for Leg joints: Opens 0 to 90 deg from inner to outer -->
     <default class="leg_joint">
-      <joint type="hinge" limited="true" range="0 90" damping="1.2" stiffness="0.5"/>
+      <joint type="hinge" limited="true" range="0 90" damping="1.5" stiffness="0.2"/>
     </default>
-    <!-- Default for Membrane joints -->
-    <default class="membrane_joint">
-      <joint type="hinge" limited="true" range="0 50" damping="0.5"/>
-    </default>
-    <!-- Default for Actuators -->
+    <!-- Default for Actuators: 0 to 1.5708 rad corresponds to 0 to 90 degrees -->
     <default class="servo_actuator">
-      <position kp="40" kv="5" ctrlrange="0 90" forcelimited="true" forcerange="-15 15"/>
+      <position kp="50" kv="6" ctrlrange="0 1.5708" forcelimited="true" forcerange="-20 20"/>
     </default>
   </default>
 
@@ -53,7 +50,7 @@
     <material name="propeller_cw" rgba="0.1 0.6 0.8 0.9"/>
     <material name="propeller_ccw" rgba="0.8 0.4 0.1 0.9"/>
     <!-- Translucent flexible membrane -->
-    <material name="membrane_mat" rgba="0.85 0.95 1.0 0.45" shininess="0.9" specular="0.8"/>
+    <material name="membrane_mat" rgba="0.80 0.92 1.0 0.45" shininess="0.9" specular="0.8"/>
   </asset>
 
   <worldbody>
@@ -65,7 +62,7 @@
 
     <!-- ============================================================ -->
     <!-- QUADKEN AUV ROBOT ROOT                                      -->
-    <!-- Submerged at Z = -1.5m, initial orientation nose along +X   -->
+    <!-- Submerged at Z = -1.5m, free 6-DOF (Roll / Pitch / Yaw)     -->
     <!-- ============================================================ -->
     <body name="auv" pos="0 0 -1.5">
       <!-- 6-DOF Free movement in water -->
@@ -122,73 +119,58 @@
       <geom name="thruster_shaft" type="cylinder" fromto="0 0 0  -0.20 0 0" size="0.008" material="frame_mat" mass="0.1"/>
 
       <!-- ========================================== -->
-      <!-- 3. FOUR LEGS & MEMBRANE STEERING (ESP1)    -->
-      <!-- Mounted on Aft Rim (X=0, R=0.12m), Length 30cm (extends to X=-0.30) -->
+      <!-- 3. FOUR LEGS & MEMBRANES (ESP1)           -->
+      <!-- Mounted on Aft Rim (X=0, R=0.12m), Length 30cm -->
+      <!-- Hinges open radially from INNER to OUTER (0 to 90 deg) -->
       <!-- ========================================== -->
 
-      <!-- LEG 0: TOP (12 o'clock, Y=0, Z=+0.12m) -->
-      <!-- Joint pitches up (opens outward around +Y axis) -->
+      <!-- LEG 0: TOP (pos: 0, 0, +0.12m) -->
+      <!-- axis="0 1 0" rotates from -X towards +Z (Opens outward/upward) -->
       <body name="leg_top" pos="0 0 0.12">
         <joint name="joint_leg_top" class="leg_joint" pos="0 0 0" axis="0 1 0"/>
-        <!-- Main strut extending 30cm rearward (-X) when angle=0 -->
+        <!-- Main strut 30cm rearward (-X) when angle=0 -->
         <geom name="strut_top" type="capsule" fromto="0 0 0  -0.30 0 0" size="0.01" material="leg_mat" mass="0.12"/>
         <geom name="tip_top" type="sphere" pos="-0.30 0 0" size="0.012" material="frame_mat" mass="0.02"/>
+        <!-- Membrane wings attached to top leg (Right wing and Left wing) -->
+        <geom name="membrane_top_r" type="box" pos="-0.15 -0.04 0" size="0.14 0.04 0.002" material="membrane_mat" contype="0" conaffinity="0" mass="0.02"/>
+        <geom name="membrane_top_l" type="box" pos="-0.15  0.04 0" size="0.14 0.04 0.002" material="membrane_mat" contype="0" conaffinity="0" mass="0.02"/>
       </body>
 
-      <!-- LEG 1: RIGHT (3 o'clock, Y=-0.12m, Z=0) -->
-      <!-- Joint yaws right (opens outward around -Z axis) -->
+      <!-- LEG 1: RIGHT (pos: 0, -0.12m, 0) -->
+      <!-- axis="0 0 1" rotates from -X towards -Y (Opens outward/rightward) -->
       <body name="leg_right" pos="0 -0.12 0">
-        <joint name="joint_leg_right" class="leg_joint" pos="0 0 0" axis="0 0 -1"/>
+        <joint name="joint_leg_right" class="leg_joint" pos="0 0 0" axis="0 0 1"/>
         <geom name="strut_right" type="capsule" fromto="0 0 0  -0.30 0 0" size="0.01" material="leg_mat" mass="0.12"/>
         <geom name="tip_right" type="sphere" pos="-0.30 0 0" size="0.012" material="frame_mat" mass="0.02"/>
+        <!-- Membrane wings attached to right leg (Top wing and Bottom wing) -->
+        <geom name="membrane_right_t" type="box" pos="-0.15 0  0.04" size="0.14 0.002 0.04" material="membrane_mat" contype="0" conaffinity="0" mass="0.02"/>
+        <geom name="membrane_right_b" type="box" pos="-0.15 0 -0.04" size="0.14 0.002 0.04" material="membrane_mat" contype="0" conaffinity="0" mass="0.02"/>
       </body>
 
-      <!-- LEG 2: BOTTOM (6 o'clock, Y=0, Z=-0.12m) -->
-      <!-- Joint pitches down (opens outward around -Y axis) -->
+      <!-- LEG 2: BOTTOM (pos: 0, 0, -0.12m) -->
+      <!-- axis="0 -1 0" rotates from -X towards -Z (Opens outward/downward) -->
       <body name="leg_bottom" pos="0 0 -0.12">
         <joint name="joint_leg_bottom" class="leg_joint" pos="0 0 0" axis="0 -1 0"/>
         <geom name="strut_bottom" type="capsule" fromto="0 0 0  -0.30 0 0" size="0.01" material="leg_mat" mass="0.12"/>
         <geom name="tip_bottom" type="sphere" pos="-0.30 0 0" size="0.012" material="frame_mat" mass="0.02"/>
+        <!-- Membrane wings attached to bottom leg (Right wing and Left wing) -->
+        <geom name="membrane_bottom_r" type="box" pos="-0.15 -0.04 0" size="0.14 0.04 0.002" material="membrane_mat" contype="0" conaffinity="0" mass="0.02"/>
+        <geom name="membrane_bottom_l" type="box" pos="-0.15  0.04 0" size="0.14 0.04 0.002" material="membrane_mat" contype="0" conaffinity="0" mass="0.02"/>
       </body>
 
-      <!-- LEG 3: LEFT (9 o'clock, Y=+0.12m, Z=0) -->
-      <!-- Joint yaws left (opens outward around +Z axis) -->
+      <!-- LEG 3: LEFT (pos: 0, +0.12m, 0) -->
+      <!-- axis="0 0 -1" rotates from -X towards +Y (Opens outward/leftward) -->
       <body name="leg_left" pos="0 0.12 0">
-        <joint name="joint_leg_left" class="leg_joint" pos="0 0 0" axis="0 0 1"/>
+        <joint name="joint_leg_left" class="leg_joint" pos="0 0 0" axis="0 0 -1"/>
         <geom name="strut_left" type="capsule" fromto="0 0 0  -0.30 0 0" size="0.01" material="leg_mat" mass="0.12"/>
         <geom name="tip_left" type="sphere" pos="-0.30 0 0" size="0.012" material="frame_mat" mass="0.02"/>
+        <!-- Membrane wings attached to left leg (Top wing and Bottom wing) -->
+        <geom name="membrane_left_t" type="box" pos="-0.15 0  0.04" size="0.14 0.002 0.04" material="membrane_mat" contype="0" conaffinity="0" mass="0.02"/>
+        <geom name="membrane_left_b" type="box" pos="-0.15 0 -0.04" size="0.14 0.002 0.04" material="membrane_mat" contype="0" conaffinity="0" mass="0.02"/>
       </body>
 
       <!-- ========================================== -->
-      <!-- 4. FOUR INTER-LEG MEMBRANES (Translucent panels) -->
-      <!-- Hinged between adjacent legs to catch water drag -->
-      <!-- ========================================== -->
-      <!-- Membrane 0-1 (Top-Right quadrant) -->
-      <body name="membrane_tr" pos="0 -0.085 0.085">
-        <joint name="joint_membrane_tr" class="membrane_joint" axis="0 0.707 -0.707"/>
-        <geom name="geom_membrane_tr" type="box" pos="-0.15 0 0" size="0.14 0.05 0.003" material="membrane_mat" mass="0.04"/>
-      </body>
-
-      <!-- Membrane 1-2 (Bottom-Right quadrant) -->
-      <body name="membrane_br" pos="0 -0.085 -0.085">
-        <joint name="joint_membrane_br" class="membrane_joint" axis="0 -0.707 -0.707"/>
-        <geom name="geom_membrane_br" type="box" pos="-0.15 0 0" size="0.14 0.05 0.003" material="membrane_mat" mass="0.04"/>
-      </body>
-
-      <!-- Membrane 2-3 (Bottom-Left quadrant) -->
-      <body name="membrane_bl" pos="0 0.085 -0.085">
-        <joint name="joint_membrane_bl" class="membrane_joint" axis="0 -0.707 0.707"/>
-        <geom name="geom_membrane_bl" type="box" pos="-0.15 0 0" size="0.14 0.05 0.003" material="membrane_mat" mass="0.04"/>
-      </body>
-
-      <!-- Membrane 3-0 (Top-Left quadrant) -->
-      <body name="membrane_tl" pos="0 0.085 0.085">
-        <joint name="joint_membrane_tl" class="membrane_joint" axis="0 0.707 0.707"/>
-        <geom name="geom_membrane_tl" type="box" pos="-0.15 0 0" size="0.14 0.05 0.003" material="membrane_mat" mass="0.04"/>
-      </body>
-
-      <!-- ========================================== -->
-      <!-- 5. HEAD BALLAST WATER-INTAKE SERVOS (ESP2) -->
+      <!-- 4. HEAD BALLAST WATER-INTAKE SERVOS (ESP2) -->
       <!-- 4 rotational valve cylinders at nose       -->
       <!-- ========================================== -->
       <body name="ballast_valve_1" pos="0.65 0 0.07">
@@ -212,17 +194,6 @@
   </worldbody>
 
   <!-- ============================================================ -->
-  <!-- KINEMATIC EQUALITY CONSTRAINTS                               -->
-  <!-- Link membrane deployment smoothly to adjacent leg angles     -->
-  <!-- ============================================================ -->
-  <equality>
-    <joint joint1="joint_leg_top" joint2="joint_membrane_tr" polycoef="0 0.5 0 0 0"/>
-    <joint joint1="joint_leg_right" joint2="joint_membrane_br" polycoef="0 0.5 0 0 0"/>
-    <joint joint1="joint_leg_bottom" joint2="joint_membrane_bl" polycoef="0 0.5 0 0 0"/>
-    <joint joint1="joint_leg_left" joint2="joint_membrane_tl" polycoef="0 0.5 0 0 0"/>
-  </equality>
-
-  <!-- ============================================================ -->
   <!-- ACTUATORS DEFINITION                                         -->
   <!-- Matching QuadKen Dora Architecture (ESP1 + ESP2)             -->
   <!-- ============================================================ -->
@@ -234,7 +205,7 @@
     <motor name="bldc_thruster_1" site="thrust_site_1" gear="1.0 0 0  0.02 0 0" ctrllimited="true" ctrlrange="0 30"/>
     <motor name="bldc_thruster_2" site="thrust_site_2" gear="1.0 0 0 -0.02 0 0" ctrllimited="true" ctrlrange="0 30"/>
 
-    <!-- 4x Membrane Leg Deployment Servos (0 deg = Streamlined closed, 90 deg = Full drag open) -->
+    <!-- 4x Membrane Leg Deployment Servos (0 deg = Closed/Streamlined, 90 deg = Full Outward Open) -->
     <position name="leg_servo_top" joint="joint_leg_top" class="servo_actuator"/>
     <position name="leg_servo_right" joint="joint_leg_right" class="servo_actuator"/>
     <position name="leg_servo_bottom" joint="joint_leg_bottom" class="servo_actuator"/>
@@ -252,7 +223,7 @@
   <!-- SENSORS DEFINITION                                           -->
   <!-- ============================================================ -->
   <sensor>
-    <!-- Orientation Quaternion from IMU -->
+    <!-- Orientation Quaternion from IMU (Supports 3D Roll / Pitch / Yaw) -->
     <framequat name="imu_quat" objtype="site" objname="imu_site"/>
     <!-- Angular Velocity (Gyro) -->
     <gyro name="imu_gyro" site="imu_site"/>
