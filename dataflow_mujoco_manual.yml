@@ -1,29 +1,21 @@
-# MuJoCo Physics SITL Dataflow for QuadKen AUV
+# MuJoCo Physics SITL Dataflow for QuadKen AUV (Manual Gamepad/Keyboard Control)
 # Combines MuJoCo physics engine with dora-rs, providing virtual BNO055 & virtual underwater camera.
-# Step 2: Autonomous Guidance, Navigation & Control (ai_guidance.py)
 nodes:
   # ============================================================
-  # PC AUTONOMOUS GUIDANCE & VISUALIZATION NODES (Step 2 GNC)
+  # PC MANUAL CONTROL & VISUALIZATION NODES
   # ============================================================
-  - id: ai_guidance
-    path: nodes/pc/ai_guidance.py
+  - id: controller
+    path: nodes/pc/controller.py
     inputs:
-      tick: dora/timer/millis/20
-      target_relative_info:
-        source: mujoco_sim/target_relative_info
-        queue_size: 5
-      bno_data:
-        source: mujoco_sim/bno_data
-        queue_size: 5
+      tick: dora/timer/millis/100
     outputs:
       - control_cmd
-      - guidance_status
 
   - id: compute
     path: nodes/pc/compute.py
     inputs:
       control_cmd:
-        source: ai_guidance/control_cmd
+        source: controller/control_cmd
         queue_size: 5
       bno_data:
         source: mujoco_sim/bno_data
@@ -51,10 +43,7 @@ nodes:
         source: mujoco_sim/bno_data
         queue_size: 5
       control_cmd:
-        source: ai_guidance/control_cmd
-        queue_size: 5
-      guidance_status:
-        source: ai_guidance/guidance_status
+        source: controller/control_cmd
         queue_size: 5
       compute_status:
         source: compute/compute_status

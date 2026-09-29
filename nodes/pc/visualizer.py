@@ -250,12 +250,36 @@ def main():
                             rr.log("balloon/popped_count", rr_Scalar(pop_cnt))
 
                             pos_w = target_info.get("target_pos_world", [0, 0, 0])
-                            rr.log("world/balloon_target", rr.Points3D([pos_w], radii=0.20, colors=[[255, 30, 80]]))
+                            rr.log("world/balloon_target", rr.Points3D([pos_w], radii=0.25, colors=[[255, 30, 80]]))
+
+                            all_balloons = target_info.get("all_balloons_world", [])
+                            if all_balloons:
+                                rr.log("world/all_balloons", rr.Points3D(all_balloons, radii=0.18, colors=[[255, 120, 160]]))
+
+                            active_cnt = target_info.get("active_count", None)
+                            if active_cnt is not None:
+                                rr.log("balloon/active_count", rr_Scalar(float(active_cnt)))
 
                             if target_info.get("just_popped", False):
-                                rr.log("status_text/balloon", rr.TextLog(f"*** BALLOON DESTROYED! Count: {pop_cnt} ***"))
+                                rr.log("status_text/balloon", rr.TextLog(f"*** BALLOON DESTROYED! Count: {pop_cnt} (Remaining: {active_cnt}) ***"))
                     except Exception as e:
                         print(f"[Visualizer] Target info log error: {e}")
+
+                # 8. Handle AI Guidance Status (Step 2 GNC Telemetry)
+                elif input_id == "guidance_status":
+                    try:
+                        raw_bytes = raw_value.to_pylist()[0]
+                        g_status = json.loads(raw_bytes if isinstance(raw_bytes, str) else raw_bytes.decode("utf-8"))
+
+                        g_mode = g_status.get("mode", "SEARCH")
+                        rr.log("status_text/guidance_mode", rr.TextLog(f"GNC Mode: {g_mode}"))
+                        rr.log("guidance/azimuth_error_deg", rr_Scalar(float(g_status.get("azimuth_err_deg", 0.0))))
+                        rr.log("guidance/elevation_error_deg", rr_Scalar(float(g_status.get("elevation_err_deg", 0.0))))
+                        rr.log("guidance/distance_m", rr_Scalar(float(g_status.get("distance_m", 0.0))))
+                        rr.log("guidance/steer_yaw", rr_Scalar(float(g_status.get("steer_yaw", 0.0))))
+                        rr.log("guidance/steer_pitch", rr_Scalar(float(g_status.get("steer_pitch", 0.0))))
+                    except Exception as e:
+                        print(f"[Visualizer] Guidance status log error: {e}")
     except KeyboardInterrupt:
         pass
     finally:

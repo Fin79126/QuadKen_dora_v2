@@ -7,6 +7,7 @@ Write-Host "Features active:" -ForegroundColor Yellow
 Write-Host "  - 3D MuJoCo Physics Engine with Hydrodynamics" -ForegroundColor Gray
 Write-Host "  - Virtual BNO055 IMU (Roll/Pitch/Yaw, Gyro, Accel, Depth)" -ForegroundColor Gray
 Write-Host "  - Virtual Underwater Forward Camera with Target HUD" -ForegroundColor Gray
+Write-Host "  - Autonomous AI Guidance & Strike Controller (Step 2 GNC)" -ForegroundColor Gray
 Write-Host "  - Closed-loop Drag-Steering & Thrust Control" -ForegroundColor Gray
 Write-Host "  - Rerun 3D Telemetry Visualizer" -ForegroundColor Gray
 Write-Host ""

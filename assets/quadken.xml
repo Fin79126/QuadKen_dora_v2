@@ -61,8 +61,18 @@
     <!-- Translucent flexible inter-leg membrane -->
     <material name="membrane_mat" rgba="0.80 0.92 1.0 0.55" shininess="0.9" specular="0.8"/>
 
-    <!-- Target Underwater Balloon Materials (Vibrant Ruby Red / Translucent Rubber) -->
+    <!-- Target Underwater Balloon Materials (Vibrant Palette & Translucent Rubber) -->
     <material name="balloon_mat" rgba="1.0 0.12 0.38 0.90" shininess="0.9" specular="0.9"/>
+    <material name="balloon_mat_red" rgba="1.0 0.12 0.38 0.90" shininess="0.9" specular="0.9"/>
+    <material name="balloon_mat_orange" rgba="1.0 0.45 0.10 0.90" shininess="0.9" specular="0.9"/>
+    <material name="balloon_mat_yellow" rgba="1.0 0.82 0.12 0.90" shininess="0.9" specular="0.9"/>
+    <material name="balloon_mat_green" rgba="0.10 0.85 0.35 0.90" shininess="0.9" specular="0.9"/>
+    <material name="balloon_mat_cyan" rgba="0.10 0.80 0.95 0.90" shininess="0.9" specular="0.9"/>
+    <material name="balloon_mat_blue" rgba="0.20 0.45 1.0 0.90" shininess="0.9" specular="0.9"/>
+    <material name="balloon_mat_purple" rgba="0.70 0.20 0.95 0.90" shininess="0.9" specular="0.9"/>
+    <material name="balloon_mat_pink" rgba="1.0 0.28 0.70 0.90" shininess="0.9" specular="0.9"/>
+    <material name="balloon_mat_lime" rgba="0.65 0.95 0.15 0.90" shininess="0.9" specular="0.9"/>
+    <material name="balloon_mat_gold" rgba="1.0 0.70 0.10 0.90" shininess="0.9" specular="0.9"/>
     <material name="balloon_tether_mat" rgba="0.85 0.85 0.85 0.5"/>
   </asset>
 
@@ -109,13 +119,77 @@
     <geom name="water_surface" type="box" pos="12.0 0 0.0" size="18.0 10.5 0.005" material="water_surface_mat" contype="0" conaffinity="0"/>
 
     <!-- ============================================================ -->
-    <!-- TARGET UNDERWATER BALLOON (Mocap body for collision & relocation) -->
-    <!-- Placed initially at X=5.0m, Y=0.5m, Z=-1.8m (Within front camera view) -->
+    <!-- TARGET UNDERWATER BALLOONS (10 Mocap bodies distributed in pool) -->
+    <!-- Floor at Z = -4.0m; tethers extend from -0.30m to floor (-4.0 - Z)m -->
     <!-- ============================================================ -->
-    <body name="balloon" pos="5.0 0.5 -1.8" mocap="true">
-      <geom name="balloon_geom" type="sphere" size="0.25" material="balloon_mat"/>
-      <geom name="balloon_knot" type="cylinder" fromto="0 0 -0.25  0 0 -0.30" size="0.02" material="balloon_mat"/>
-      <geom name="balloon_tether" type="cylinder" fromto="0 0 -0.30  0 0 -2.2" size="0.005" material="balloon_tether_mat"/>
+    <!-- Balloon 0: Initial Front Target (Ruby Red) -->
+    <body name="balloon_0" pos="5.0 0.5 -1.8" mocap="true">
+      <geom name="balloon_0_geom" type="sphere" size="0.25" material="balloon_mat_red"/>
+      <geom name="balloon_0_knot" type="cylinder" fromto="0 0 -0.25  0 0 -0.30" size="0.02" material="balloon_mat_red"/>
+      <geom name="balloon_0_tether" type="cylinder" fromto="0 0 -0.30  0 0 -2.20" size="0.005" material="balloon_tether_mat"/>
+    </body>
+
+    <!-- Balloon 1: Right Forward (Tangerine Orange) -->
+    <body name="balloon_1" pos="10.0 -2.5 -2.0" mocap="true">
+      <geom name="balloon_1_geom" type="sphere" size="0.25" material="balloon_mat_orange"/>
+      <geom name="balloon_1_knot" type="cylinder" fromto="0 0 -0.25  0 0 -0.30" size="0.02" material="balloon_mat_orange"/>
+      <geom name="balloon_1_tether" type="cylinder" fromto="0 0 -0.30  0 0 -2.00" size="0.005" material="balloon_tether_mat"/>
+    </body>
+
+    <!-- Balloon 2: Left Mid (Sun Yellow) -->
+    <body name="balloon_2" pos="14.0 3.0 -1.6" mocap="true">
+      <geom name="balloon_2_geom" type="sphere" size="0.25" material="balloon_mat_yellow"/>
+      <geom name="balloon_2_knot" type="cylinder" fromto="0 0 -0.25  0 0 -0.30" size="0.02" material="balloon_mat_yellow"/>
+      <geom name="balloon_2_tether" type="cylinder" fromto="0 0 -0.30  0 0 -2.40" size="0.005" material="balloon_tether_mat"/>
+    </body>
+
+    <!-- Balloon 3: Right Mid-Back (Emerald Green) -->
+    <body name="balloon_3" pos="18.0 -4.0 -2.2" mocap="true">
+      <geom name="balloon_3_geom" type="sphere" size="0.25" material="balloon_mat_green"/>
+      <geom name="balloon_3_knot" type="cylinder" fromto="0 0 -0.25  0 0 -0.30" size="0.02" material="balloon_mat_green"/>
+      <geom name="balloon_3_tether" type="cylinder" fromto="0 0 -0.30  0 0 -1.80" size="0.005" material="balloon_tether_mat"/>
+    </body>
+
+    <!-- Balloon 4: Center Far (Aqua Cyan) -->
+    <body name="balloon_4" pos="22.0 1.0 -1.7" mocap="true">
+      <geom name="balloon_4_geom" type="sphere" size="0.25" material="balloon_mat_cyan"/>
+      <geom name="balloon_4_knot" type="cylinder" fromto="0 0 -0.25  0 0 -0.30" size="0.02" material="balloon_mat_cyan"/>
+      <geom name="balloon_4_tether" type="cylinder" fromto="0 0 -0.30  0 0 -2.30" size="0.005" material="balloon_tether_mat"/>
+    </body>
+
+    <!-- Balloon 5: Far Right Deep (Ocean Blue) -->
+    <body name="balloon_5" pos="26.0 -2.5 -2.4" mocap="true">
+      <geom name="balloon_5_geom" type="sphere" size="0.25" material="balloon_mat_blue"/>
+      <geom name="balloon_5_knot" type="cylinder" fromto="0 0 -0.25  0 0 -0.30" size="0.02" material="balloon_mat_blue"/>
+      <geom name="balloon_5_tether" type="cylinder" fromto="0 0 -0.30  0 0 -1.60" size="0.005" material="balloon_tether_mat"/>
+    </body>
+
+    <!-- Balloon 6: Far Left Shallow (Violet Purple) -->
+    <body name="balloon_6" pos="25.0 4.0 -1.5" mocap="true">
+      <geom name="balloon_6_geom" type="sphere" size="0.25" material="balloon_mat_purple"/>
+      <geom name="balloon_6_knot" type="cylinder" fromto="0 0 -0.25  0 0 -0.30" size="0.02" material="balloon_mat_purple"/>
+      <geom name="balloon_6_tether" type="cylinder" fromto="0 0 -0.30  0 0 -2.50" size="0.005" material="balloon_tether_mat"/>
+    </body>
+
+    <!-- Balloon 7: Mid Left Far (Hot Pink) -->
+    <body name="balloon_7" pos="19.0 5.5 -2.1" mocap="true">
+      <geom name="balloon_7_geom" type="sphere" size="0.25" material="balloon_mat_pink"/>
+      <geom name="balloon_7_knot" type="cylinder" fromto="0 0 -0.25  0 0 -0.30" size="0.02" material="balloon_mat_pink"/>
+      <geom name="balloon_7_tether" type="cylinder" fromto="0 0 -0.30  0 0 -1.90" size="0.005" material="balloon_tether_mat"/>
+    </body>
+
+    <!-- Balloon 8: Right Mid-Front (Lime Green) -->
+    <body name="balloon_8" pos="11.0 -5.0 -1.8" mocap="true">
+      <geom name="balloon_8_geom" type="sphere" size="0.25" material="balloon_mat_lime"/>
+      <geom name="balloon_8_knot" type="cylinder" fromto="0 0 -0.25  0 0 -0.30" size="0.02" material="balloon_mat_lime"/>
+      <geom name="balloon_8_tether" type="cylinder" fromto="0 0 -0.30  0 0 -2.20" size="0.005" material="balloon_tether_mat"/>
+    </body>
+
+    <!-- Balloon 9: Left Forward Deep (Amber Gold) -->
+    <body name="balloon_9" pos="7.0 3.5 -2.3" mocap="true">
+      <geom name="balloon_9_geom" type="sphere" size="0.25" material="balloon_mat_gold"/>
+      <geom name="balloon_9_knot" type="cylinder" fromto="0 0 -0.25  0 0 -0.30" size="0.02" material="balloon_mat_gold"/>
+      <geom name="balloon_9_tether" type="cylinder" fromto="0 0 -0.30  0 0 -1.70" size="0.005" material="balloon_tether_mat"/>
     </body>
 
     <!-- ============================================================ -->

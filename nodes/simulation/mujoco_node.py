@@ -117,29 +117,58 @@ class QuadKenMuJoCoSim:
         self.chase_cam.distance = 1.6
         self.chase_cam.elevation = -26.0
 
-        # Target Balloon Setup (Mocap Body for collision & dynamic respawning)
-        self.balloon_body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "balloon")
-        self.balloon_geom_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, "balloon_geom")
-        if self.balloon_body_id != -1 and self.model.body_mocapid[self.balloon_body_id] != -1:
-            self.balloon_mocap_id = int(self.model.body_mocapid[self.balloon_body_id])
-        else:
-            self.balloon_mocap_id = 0 if self.model.nmocap > 0 else -1
+        # Target Balloons Setup (10 Mocap Bodies distributed in pool arena)
+        self.balloons = []
+        for i in range(10):
+            name = f"balloon_{i}"
+            b_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, name)
+            if b_id != -1:
+                g_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, f"{name}_geom")
+                m_id = int(self.model.body_mocapid[b_id]) if self.model.body_mocapid[b_id] != -1 else -1
+                init_pos = np.array(self.data.mocap_pos[m_id], dtype=np.float64) if m_id != -1 else np.zeros(3)
+                self.balloons.append({
+                    "idx": i,
+                    "name": name,
+                    "body_id": b_id,
+                    "geom_id": g_id,
+                    "mocap_id": m_id,
+                    "popped": False,
+                    "init_pos": init_pos.copy(),
+                })
+        
+        # Fallback to single legacy "balloon" if balloon_0..9 not found
+        if not self.balloons:
+            b_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "balloon")
+            if b_id != -1:
+                g_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, "balloon_geom")
+                m_id = int(self.model.body_mocapid[b_id]) if self.model.body_mocapid[b_id] != -1 else -1
+                init_pos = np.array(self.data.mocap_pos[m_id], dtype=np.float64) if m_id != -1 else np.zeros(3)
+                self.balloons.append({
+                    "idx": 0,
+                    "name": "balloon",
+                    "body_id": b_id,
+                    "geom_id": g_id,
+                    "mocap_id": m_id,
+                    "popped": False,
+                    "init_pos": init_pos.copy(),
+                })
 
         self.balloon_pop_count = 0
         self.last_pop_time = 0.0
         self.is_surfaced = False
 
-        # Submerged target waypoints distributed across the 36m x 21m pool arena (X: 5..25m, Y: -4..+4m, Z: -1.4..-2.5m)
-        self.balloon_waypoints = [
-            [5.0, 0.5, -1.8],
-            [12.0, -3.0, -2.2],
-            [18.0, 4.0, -1.6],
-            [25.0, -2.0, -2.5],
-            [14.0, 2.5, -1.4],
-            [7.0, -3.5, -2.0],
-            [22.0, 0.0, -1.8],
-        ]
+        # Current target index & backward compatibility properties
         self.current_waypoint_idx = 0
+        self.balloon_waypoints = [b["init_pos"].tolist() for b in self.balloons]
+
+        if self.balloons:
+            self.balloon_body_id = self.balloons[0]["body_id"]
+            self.balloon_geom_id = self.balloons[0]["geom_id"]
+            self.balloon_mocap_id = self.balloons[0]["mocap_id"]
+        else:
+            self.balloon_body_id = -1
+            self.balloon_geom_id = -1
+            self.balloon_mocap_id = -1
 
     def set_actuator_commands(self, cmd_dict):
         """Parse actuator_cmd from pc/compute.py."""
@@ -305,13 +334,17 @@ class QuadKenMuJoCoSim:
         self.data.xfrc_applied[self.auv_body_id, 3:6] = world_torque
 
     def check_balloon_collision(self):
-        """Check for collision or close proximity between QuadKen nose and balloon."""
-        if self.balloon_mocap_id == -1:
+        """Check for collision or close proximity between QuadKen nose and any active balloon."""
+        if not self.balloons:
             return
 
+        sim_time = float(self.data.time)
         now = time.time()
-        if now - self.last_pop_time < 1.0:
-            return
+        if hasattr(self, "last_sim_pop_time"):
+            if sim_time - self.last_sim_pop_time < 0.8:
+                return
+        else:
+            self.last_sim_pop_time = -999.0
 
         rot_mat = np.zeros(9, dtype=np.float64)
         mujoco.mju_quat2Mat(rot_mat, self.data.qpos[3:7])
@@ -319,30 +352,62 @@ class QuadKenMuJoCoSim:
         p_robot = self.data.qpos[0:3]
         p_nose = p_robot + rot_mat @ np.array([0.72, 0.0, 0.0])
 
-        balloon_pos = self.data.mocap_pos[self.balloon_mocap_id]
-        dist_to_nose = float(np.linalg.norm(balloon_pos - p_nose))
-
         # Check contact list in MuJoCo
-        contact_detected = False
-        if self.balloon_geom_id != -1:
-            for c_idx in range(self.data.ncon):
-                contact = self.data.contact[c_idx]
-                if contact.geom1 == self.balloon_geom_id or contact.geom2 == self.balloon_geom_id:
-                    contact_detected = True
-                    break
+        contact_geoms = set()
+        for c_idx in range(self.data.ncon):
+            contact_geoms.add(self.data.contact[c_idx].geom1)
+            contact_geoms.add(self.data.contact[c_idx].geom2)
 
-        # Strike threshold: nose collision or within 0.35m of balloon center
-        if contact_detected or dist_to_nose < 0.35:
+        # Find any active balloon in collision with nose
+        hit_balloon = None
+        min_hit_dist = 999.0
+        for b in self.balloons:
+            if b["popped"]:
+                continue
+            b_pos = self.data.mocap_pos[b["mocap_id"]]
+            dist = float(np.linalg.norm(b_pos - p_nose))
+            is_contact = (b["geom_id"] in contact_geoms) if b["geom_id"] != -1 else False
+
+            if (is_contact or dist < 0.35) and dist < min_hit_dist:
+                hit_balloon = b
+                min_hit_dist = dist
+
+        if hit_balloon is not None:
             self.balloon_pop_count += 1
             self.last_pop_time = now
+            self.last_sim_pop_time = sim_time
+            hit_balloon["popped"] = True
+
+            # Move popped balloon deep under floor out of view
+            self.data.mocap_pos[hit_balloon["mocap_id"]] = [
+                hit_balloon["init_pos"][0],
+                hit_balloon["init_pos"][1],
+                -50.0,
+            ]
+
+            active_remaining = sum(1 for b in self.balloons if not b["popped"])
             print(f"\n[MuJoCo Node] *******************************************")
-            print(f"[MuJoCo Node] *** BALLOON POPPED! Total Count: {self.balloon_pop_count} ***")
+            print(f"[MuJoCo Node] *** BALLOON #{hit_balloon['idx']} POPPED! Count: {self.balloon_pop_count} (Remaining: {active_remaining}/10) ***")
             print(f"[MuJoCo Node] *******************************************\n")
 
-            # Advance to next waypoint
-            self.current_waypoint_idx = (self.current_waypoint_idx + 1) % len(self.balloon_waypoints)
-            next_pos = self.balloon_waypoints[self.current_waypoint_idx]
-            self.data.mocap_pos[self.balloon_mocap_id] = next_pos
+            if active_remaining == 0:
+                print("\n[MuJoCo Node] ★★★ ALL 10 BALLOONS DESTROYED! RESPAWNING ALL! ★★★\n")
+                for b in self.balloons:
+                    b["popped"] = False
+                    self.data.mocap_pos[b["mocap_id"]] = b["init_pos"].copy()
+                self.current_waypoint_idx = 0
+            else:
+                # Find nearest active balloon to nose
+                active_list = [b for b in self.balloons if not b["popped"]]
+                dists = [np.linalg.norm(self.data.mocap_pos[b["mocap_id"]] - p_nose) for b in active_list]
+                nearest = active_list[int(np.argmin(dists))]
+                self.current_waypoint_idx = nearest["idx"]
+
+            # Update legacy attributes to current target
+            target_b = self.balloons[self.current_waypoint_idx]
+            self.balloon_body_id = target_b["body_id"]
+            self.balloon_geom_id = target_b["geom_id"]
+            self.balloon_mocap_id = target_b["mocap_id"]
             mujoco.mj_forward(self.model, self.data)
 
     def step(self):
@@ -352,8 +417,8 @@ class QuadKenMuJoCoSim:
         self.check_balloon_collision()
 
     def get_target_relative_info(self):
-        """Compute relative azimuth, elevation, and distance to balloon from AUV nose."""
-        if self.balloon_mocap_id == -1:
+        """Compute relative azimuth, elevation, and distance to current target balloon from AUV nose."""
+        if not self.balloons or self.current_waypoint_idx >= len(self.balloons):
             return {
                 "target_found": False,
                 "azimuth_deg": 0.0,
@@ -362,7 +427,14 @@ class QuadKenMuJoCoSim:
                 "target_pos_world": [0.0, 0.0, 0.0],
                 "pop_count": self.balloon_pop_count,
                 "just_popped": False,
+                "is_surfaced": bool(getattr(self, "is_surfaced", False)),
+                "active_count": 0,
+                "total_count": len(self.balloons),
+                "all_balloons_world": [],
             }
+
+        target_b = self.balloons[self.current_waypoint_idx]
+        target_mocap_id = target_b["mocap_id"]
 
         rot_mat = np.zeros(9, dtype=np.float64)
         mujoco.mju_quat2Mat(rot_mat, self.data.qpos[3:7])
@@ -370,7 +442,7 @@ class QuadKenMuJoCoSim:
         p_robot = self.data.qpos[0:3]
         p_nose = p_robot + rot_mat @ np.array([0.72, 0.0, 0.0])
 
-        balloon_pos = self.data.mocap_pos[self.balloon_mocap_id]
+        balloon_pos = self.data.mocap_pos[target_mocap_id]
         v_world = balloon_pos - p_nose
         v_body = rot_mat.T @ v_world
 
@@ -382,7 +454,16 @@ class QuadKenMuJoCoSim:
         # Elevation: Down is negative, Up is positive (+zb)
         elevation_deg = math.degrees(math.atan2(zb, math.hypot(xb, yb)))
 
-        just_popped = (time.time() - self.last_pop_time < 1.5)
+        sim_time = float(self.data.time)
+        just_popped = (time.time() - self.last_pop_time < 1.5) or (
+            hasattr(self, "last_sim_pop_time") and (sim_time - self.last_sim_pop_time < 1.5)
+        )
+
+        active_positions = [
+            [round(float(p), 2) for p in self.data.mocap_pos[b["mocap_id"]]]
+            for b in self.balloons
+            if not b["popped"]
+        ]
 
         return {
             "target_found": True,
@@ -393,6 +474,9 @@ class QuadKenMuJoCoSim:
             "pop_count": self.balloon_pop_count,
             "just_popped": just_popped,
             "is_surfaced": bool(getattr(self, "is_surfaced", False)),
+            "active_count": len(active_positions),
+            "total_count": len(self.balloons),
+            "all_balloons_world": active_positions,
         }
 
     def get_bno_payload(self, seq):
@@ -454,7 +538,8 @@ class QuadKenMuJoCoSim:
             az = target_info.get("azimuth_deg", 0.0)
             el = target_info.get("elevation_deg", 0.0)
             pop = target_info.get("pop_count", 0)
-            hud_target = f"BALLOON:{dist:4.1f}m [Az:{az:+4.1f} El:{el:+4.1f}] POP:{pop}"
+            active = target_info.get("active_count", 10)
+            hud_target = f"BALLOON:{dist:4.1f}m [Az:{az:+4.1f} El:{el:+4.1f}] POP:{pop} ({active}/10)"
             cv2.putText(
                 bgr_img,
                 hud_target,
@@ -558,9 +643,10 @@ class QuadKenMuJoCoSim:
         if target_info and target_info.get("target_found", False):
             dist = target_info.get("distance_m", 0.0)
             pop = target_info.get("pop_count", 0)
+            active = target_info.get("active_count", 10)
             cv2.putText(
                 bgr_img,
-                f"TARGET BALLOON: {dist:4.1f}m | DESTROYED: {pop}",
+                f"TARGET BALLOON: {dist:4.1f}m | DESTROYED: {pop} ({active}/10)",
                 (8, 34),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.33,
