@@ -150,6 +150,8 @@ def main():
                         rr.log("imu/yaw", rr_Scalar(yaw))
                         rr.log("imu/gyro/yaw_rate", rr_Scalar(float(gyro[2])))
                         rr.log("imu/accel/forward_x", rr_Scalar(float(accel[0])))
+                        if "is_surfaced" in data:
+                            rr.log("telemetry/is_surfaced", rr_Scalar(1.0 if data["is_surfaced"] else 0.0))
                     except Exception as e:
                         print(f"[Visualizer] BNO log error: {e}")
 

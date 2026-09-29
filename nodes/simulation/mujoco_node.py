@@ -127,14 +127,17 @@ class QuadKenMuJoCoSim:
 
         self.balloon_pop_count = 0
         self.last_pop_time = 0.0
+        self.is_surfaced = False
 
-        # Submerged target waypoints for balloon respawning (X: 3.5..6.5m, Y: -0.8..0.8m, Z: -1.7..-1.3m)
+        # Submerged target waypoints distributed across the 36m x 21m pool arena (X: 5..25m, Y: -4..+4m, Z: -1.4..-2.5m)
         self.balloon_waypoints = [
-            [4.2, 0.3, -1.5],
-            [5.5, -0.5, -1.3],
-            [3.8, -0.4, -1.7],
-            [6.2, 0.5, -1.5],
-            [4.8, 0.7, -1.2],
+            [5.0, 0.5, -1.8],
+            [12.0, -3.0, -2.2],
+            [18.0, 4.0, -1.6],
+            [25.0, -2.0, -2.5],
+            [14.0, 2.5, -1.4],
+            [7.0, -3.5, -2.0],
+            [22.0, 0.0, -1.8],
         ]
         self.current_waypoint_idx = 0
 
@@ -157,9 +160,17 @@ class QuadKenMuJoCoSim:
 
     def apply_control_and_hydrodynamics(self):
         """Apply actuator targets, hydrodynamic drag steering, and head ballast buoyancy shifts."""
-        # 1. Apply BLDC forward thrust (Actuators 0 & 1)
-        thrust_1 = (max(0.0, min(100.0, self.target_bldc[0])) / 100.0) * self.max_thrust_n
-        thrust_2 = (max(0.0, min(100.0, self.target_bldc[1])) / 100.0) * self.max_thrust_n
+        # Water Surface Boundary Dynamics (Surface at Z = 0.0m)
+        # Main hull radius is 0.12m. Center of robot is self.data.qpos[2].
+        # Hull top is at z_robot + 0.12m.
+        z_robot = float(self.data.qpos[2])
+        # submerged_ratio: 1.0 when fully submerged (z <= -0.12m), 0.0 when fully in air (z >= +0.12m)
+        submerged_ratio = max(0.0, min(1.0, (-z_robot + 0.12) / 0.24))
+        self.is_surfaced = (z_robot >= -0.10)
+
+        # 1. Apply BLDC forward thrust (Actuators 0 & 1), scaled by water immersion
+        thrust_1 = (max(0.0, min(100.0, self.target_bldc[0])) / 100.0) * self.max_thrust_n * submerged_ratio
+        thrust_2 = (max(0.0, min(100.0, self.target_bldc[1])) / 100.0) * self.max_thrust_n * submerged_ratio
         self.data.ctrl[0] = thrust_1
         self.data.ctrl[1] = thrust_2
 
@@ -192,7 +203,7 @@ class QuadKenMuJoCoSim:
         total_body_torque = np.zeros(3, dtype=np.float64)
 
         if u_forward > 0.01:
-            q_dynamic = 0.5 * self.water_density * (u_forward ** 2)
+            q_dynamic = 0.5 * self.water_density * (u_forward ** 2) * submerged_ratio
 
             # Legs: [0: Top, 1: Right, 2: Bottom, 3: Left]
             # Uses ACTUAL physical joint angle (qpos) instead of target command for realistic transient response!
@@ -251,9 +262,8 @@ class QuadKenMuJoCoSim:
         # negative buoyancy (-1.5 N net downward), diving nose-first.
         com_world = self.data.xipos[self.auv_body_id]
 
-        # Base upward buoyancy:
-        # CoB is strictly on the centerline (Y=0, Z=0) so roll restoring torque is 0.0!
-        f_buoy_mag = 76.16  # 74.16 N (gravity) + 2.0 N (empty positive buoyancy)
+        # Base upward buoyancy scaled by submerged fraction (at Z=0, buoyancy drops and gravity pulls AUV back down!)
+        f_buoy_mag = 76.16 * submerged_ratio
         f_buoy_world = np.array([0.0, 0.0, f_buoy_mag])
         p_cob_world = self.data.qpos[0:3] + rot_mat @ np.array([0.234, 0.0, 0.0])
         r_cob = p_cob_world - com_world
@@ -382,6 +392,7 @@ class QuadKenMuJoCoSim:
             "target_pos_world": [round(float(p), 2) for p in balloon_pos],
             "pop_count": self.balloon_pop_count,
             "just_popped": just_popped,
+            "is_surfaced": bool(getattr(self, "is_surfaced", False)),
         }
 
     def get_bno_payload(self, seq):
@@ -407,6 +418,7 @@ class QuadKenMuJoCoSim:
             "gyro": [round(g, 2) for g in gyro_deg],
             "accel": [round(a, 2) for a in accel_data],
             "depth_m": round(float(depth_m), 2),
+            "is_surfaced": bool(getattr(self, "is_surfaced", False)),
         }
         return payload
 
@@ -482,6 +494,20 @@ class QuadKenMuJoCoSim:
             cv2.LINE_AA,
         )
 
+        # Surface breach warning overlay
+        if bno_data.get("is_surfaced", False):
+            cv2.rectangle(bgr_img, (cx - 95, 40), (cx + 95, 60), (0, 0, 180), -1)
+            cv2.putText(
+                bgr_img,
+                "SURFACE BREACH",
+                (cx - 75, 55),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.42,
+                (255, 255, 255),
+                1,
+                cv2.LINE_AA,
+            )
+
         # Compress to JPEG bytes
         success, encoded_jpg = cv2.imencode(".jpg", bgr_img, self.encode_param)
         if success:
@@ -516,6 +542,18 @@ class QuadKenMuJoCoSim:
             1,
             cv2.LINE_AA,
         )
+
+        if bno_data.get("is_surfaced", False):
+            cv2.putText(
+                bgr_img,
+                "[SURFACED]",
+                (w - 95, 18),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.35,
+                (0, 90, 255),
+                1,
+                cv2.LINE_AA,
+            )
 
         if target_info and target_info.get("target_found", False):
             dist = target_info.get("distance_m", 0.0)

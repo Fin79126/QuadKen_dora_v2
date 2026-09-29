@@ -40,10 +40,15 @@
   </default>
 
   <asset>
-    <!-- Underwater environment visuals -->
-    <texture type="skybox" builtin="gradient" rgb1="0.05 0.2 0.35" rgb2="0.01 0.05 0.12" width="512" height="512"/>
-    <texture name="seafloor_tex" type="2d" builtin="checker" rgb1="0.25 0.28 0.22" rgb2="0.18 0.20 0.16" width="256" height="256"/>
-    <material name="seafloor_mat" texture="seafloor_tex" texrepeat="20 20" reflectance="0.05"/>
+    <!-- Pool environment visuals -->
+    <texture type="skybox" builtin="gradient" rgb1="0.15 0.45 0.65" rgb2="0.05 0.15 0.25" width="512" height="512"/>
+    <texture name="pool_floor_tex" type="2d" builtin="checker" rgb1="0.12 0.52 0.72" rgb2="0.16 0.62 0.82" width="256" height="256"/>
+    <material name="pool_floor_mat" texture="pool_floor_tex" texrepeat="72 42" reflectance="0.15" shininess="0.8"/>
+    <texture name="pool_wall_tex" type="2d" builtin="checker" rgb1="0.82 0.90 0.96" rgb2="0.72 0.82 0.90" width="256" height="256"/>
+    <material name="pool_wall_mat" texture="pool_wall_tex" texrepeat="48 8" reflectance="0.2" shininess="0.7"/>
+    <material name="pool_deck_mat" rgba="0.92 0.93 0.94 1.0" shininess="0.4"/>
+    <material name="water_surface_mat" rgba="0.1 0.45 0.7 0.35" specular="0.8" shininess="0.9"/>
+    <material name="lane_marker_mat" rgba="0.05 0.22 0.45 0.95"/>
 
     <!-- Robot materials -->
     <material name="hull_mat" rgba="0.75 0.80 0.85 1.0" shininess="0.8" specular="0.6"/>
@@ -55,55 +60,62 @@
     <material name="propeller_ccw" rgba="0.8 0.4 0.1 0.9"/>
     <!-- Translucent flexible inter-leg membrane -->
     <material name="membrane_mat" rgba="0.80 0.92 1.0 0.55" shininess="0.9" specular="0.8"/>
-    <!-- Underwater targets and landmarks -->
-    <material name="gate_mat" rgba="0.95 0.75 0.1 1.0" shininess="0.7"/>
-    <material name="buoy_red" rgba="0.9 0.15 0.15 1.0" shininess="0.8"/>
-    <material name="buoy_green" rgba="0.15 0.85 0.25 1.0" shininess="0.8"/>
-    <material name="pillar_mat" rgba="0.4 0.45 0.5 1.0"/>
+
     <!-- Target Underwater Balloon Materials (Vibrant Ruby Red / Translucent Rubber) -->
     <material name="balloon_mat" rgba="1.0 0.12 0.38 0.90" shininess="0.9" specular="0.9"/>
     <material name="balloon_tether_mat" rgba="0.85 0.85 0.85 0.5"/>
   </asset>
 
   <worldbody>
-    <light directional="true" pos="0 0 8" dir="0 0 -1" diffuse="0.8 0.85 0.9" specular="0.3 0.3 0.3"/>
-    <light directional="false" pos="2 2 3" diffuse="0.3 0.5 0.6"/>
+    <light directional="true" pos="12.0 0 16" dir="0 0 -1" diffuse="0.85 0.9 0.95" specular="0.3 0.3 0.3"/>
+    <light directional="false" pos="5.0 0 4" diffuse="0.35 0.55 0.65"/>
+    <light directional="false" pos="20.0 0 4" diffuse="0.35 0.55 0.65"/>
 
-    <!-- Seafloor at 5m depth -->
-    <geom name="seafloor" type="plane" pos="0 0 -5.0" size="30 30 0.1" material="seafloor_mat"/>
+    <!-- ============================================================ -->
+    <!-- POOL SANDBOX ARENA (9x Area: 36m Length x 21m Width x 4m Depth) -->
+    <!-- Center: X=12.0m, Y=0.0m | Floor at Z=-4.0m, Surface at Z=0.0m -->
+    <!-- ============================================================ -->
+    <!-- Pool Floor (Z = -4.0m) -->
+    <geom name="pool_floor" type="box" pos="12.0 0 -4.05" size="18.0 10.5 0.05" material="pool_floor_mat"/>
 
-    <!-- Underwater Navigation Gate 1 (at X=3m, submerged at Z=-1.5m) -->
-    <body name="gate_1" pos="3.0 0 -1.5">
-      <geom name="gate_1_left" type="cylinder" fromto="0 -0.8 -0.8  0 -0.8 0.8" size="0.04" material="gate_mat"/>
-      <geom name="gate_1_right" type="cylinder" fromto="0 0.8 -0.8   0 0.8 0.8" size="0.04" material="gate_mat"/>
-      <geom name="gate_1_top" type="cylinder" fromto="0 -0.8 0.8   0 0.8 0.8" size="0.04" material="gate_mat"/>
-    </body>
+    <!-- 5 Swimming Lane Lines on Floor (Lanes: Y=-6, -3, 0, +3, +6) -->
+    <geom name="lane_marker_center" type="box" pos="12.0 0 -3.99" size="17.0 0.15 0.005" material="lane_marker_mat"/>
+    <geom name="lane_marker_left_1" type="box" pos="12.0 3.5 -3.99" size="17.0 0.15 0.005" material="lane_marker_mat"/>
+    <geom name="lane_marker_right_1" type="box" pos="12.0 -3.5 -3.99" size="17.0 0.15 0.005" material="lane_marker_mat"/>
+    <geom name="lane_marker_left_2" type="box" pos="12.0 7.0 -3.99" size="17.0 0.15 0.005" material="lane_marker_mat"/>
+    <geom name="lane_marker_right_2" type="box" pos="12.0 -7.0 -3.99" size="17.0 0.15 0.005" material="lane_marker_mat"/>
 
-    <!-- Underwater Navigation Gate 2 (at X=6.5m, submerged at Z=-1.8m) -->
-    <body name="gate_2" pos="6.5 0.5 -1.8">
-      <geom name="gate_2_left" type="cylinder" fromto="0 -0.8 -0.8  0 -0.8 0.8" size="0.04" material="gate_mat"/>
-      <geom name="gate_2_right" type="cylinder" fromto="0 0.8 -0.8   0 0.8 0.8" size="0.04" material="gate_mat"/>
-      <geom name="gate_2_top" type="cylinder" fromto="0 -0.8 0.8   0 0.8 0.8" size="0.04" material="gate_mat"/>
-    </body>
+    <!-- Cross marks at lane ends -->
+    <geom name="lane_cross_front" type="box" pos="28.0 0 -3.99" size="0.15 0.8 0.005" material="lane_marker_mat"/>
+    <geom name="lane_cross_back" type="box" pos="-4.0 0 -3.99" size="0.15 0.8 0.005" material="lane_marker_mat"/>
 
-    <!-- Navigation Buoys / Markers -->
-    <geom name="marker_buoy_1" type="sphere" pos="2.0 1.2 -1.5" size="0.15" material="buoy_red"/>
-    <geom name="marker_buoy_2" type="sphere" pos="4.5 -1.2 -1.6" size="0.15" material="buoy_green"/>
-    <geom name="marker_buoy_3" type="sphere" pos="8.0 0.0 -1.5" size="0.20" material="buoy_red"/>
+    <!-- 4 Surrounding Pool Enclosure Walls (Boxed Sandbox Arena) -->
+    <!-- Front Wall (+X at X = +30.0m) -->
+    <geom name="pool_wall_front" type="box" pos="30.05 0 -1.75" size="0.05 10.5 2.25" material="pool_wall_mat"/>
+    <!-- Back Wall (-X at X = -6.0m) -->
+    <geom name="pool_wall_back" type="box" pos="-6.05 0 -1.75" size="0.05 10.5 2.25" material="pool_wall_mat"/>
+    <!-- Left Wall (+Y at Y = +10.5m) -->
+    <geom name="pool_wall_left" type="box" pos="12.0 10.55 -1.75" size="18.05 0.05 2.25" material="pool_wall_mat"/>
+    <!-- Right Wall (-Y at Y = -10.5m) -->
+    <geom name="pool_wall_right" type="box" pos="12.0 -10.55 -1.75" size="18.05 0.05 2.25" material="pool_wall_mat"/>
 
-    <!-- Seafloor Coral / Rock Pillars -->
-    <geom name="rock_1" type="cylinder" fromto="1.5 2.0 -5.0  1.5 2.0 -2.5" size="0.3" material="pillar_mat"/>
-    <geom name="rock_2" type="cylinder" fromto="5.0 -2.5 -5.0  5.0 -2.5 -2.0" size="0.4" material="pillar_mat"/>
-    <geom name="rock_3" type="cylinder" fromto="8.5 2.0 -5.0  8.5 2.0 -2.2" size="0.35" material="pillar_mat"/>
+    <!-- Pool Deck / Exterior Rim Borders at Z = 0.0m -->
+    <geom name="pool_deck_front" type="box" pos="32.5 0 0.05" size="2.5 13.5 0.05" material="pool_deck_mat"/>
+    <geom name="pool_deck_back" type="box" pos="-8.5 0 0.05" size="2.5 13.5 0.05" material="pool_deck_mat"/>
+    <geom name="pool_deck_left" type="box" pos="12.0 12.0 0.05" size="18.1 1.5 0.05" material="pool_deck_mat"/>
+    <geom name="pool_deck_right" type="box" pos="12.0 -12.0 0.05" size="18.1 1.5 0.05" material="pool_deck_mat"/>
+
+    <!-- Water Surface (Translucent, level at Z = 0.0m) -->
+    <geom name="water_surface" type="box" pos="12.0 0 0.0" size="18.0 10.5 0.005" material="water_surface_mat" contype="0" conaffinity="0"/>
 
     <!-- ============================================================ -->
     <!-- TARGET UNDERWATER BALLOON (Mocap body for collision & relocation) -->
-    <!-- Placed at X=4.2m, Y=0.3m, Z=-1.5m (Within front camera view) -->
+    <!-- Placed initially at X=5.0m, Y=0.5m, Z=-1.8m (Within front camera view) -->
     <!-- ============================================================ -->
-    <body name="balloon" pos="4.2 0.3 -1.5" mocap="true">
-      <geom name="balloon_geom" type="sphere" size="0.20" material="balloon_mat"/>
-      <geom name="balloon_knot" type="cylinder" fromto="0 0 -0.20  0 0 -0.24" size="0.02" material="balloon_mat"/>
-      <geom name="balloon_tether" type="cylinder" fromto="0 0 -0.24  0 0 -3.5" size="0.005" material="balloon_tether_mat"/>
+    <body name="balloon" pos="5.0 0.5 -1.8" mocap="true">
+      <geom name="balloon_geom" type="sphere" size="0.25" material="balloon_mat"/>
+      <geom name="balloon_knot" type="cylinder" fromto="0 0 -0.25  0 0 -0.30" size="0.02" material="balloon_mat"/>
+      <geom name="balloon_tether" type="cylinder" fromto="0 0 -0.30  0 0 -2.2" size="0.005" material="balloon_tether_mat"/>
     </body>
 
     <!-- ============================================================ -->
