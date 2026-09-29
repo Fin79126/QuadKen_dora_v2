@@ -602,92 +602,96 @@ class QuadKenMuJoCoSim:
         }
         return payload
 
-    def render_front_camera(self, bno_data, target_info=None):
-        """Render front camera image and add HUD overlay."""
+    def render_front_camera(self, bno_data=None, target_info=None, with_hud=False, return_raw_bgr=False):
+        """Render front camera image and optionally add HUD overlay."""
         self.renderer.update_scene(self.data, camera="front_camera")
         rgb_img = self.renderer.render()
         bgr_img = cv2.cvtColor(rgb_img, cv2.COLOR_RGB2BGR)
 
-        # Draw HUD overlays on camera frame
-        h, w = bgr_img.shape[:2]
-        cx, cy = w // 2, h // 2
+        if return_raw_bgr:
+            return bgr_img
 
-        # 1. Target HUD Reticle (crosshair)
-        cv2.line(bgr_img, (cx - 14, cy), (cx + 14, cy), (0, 240, 240), 1)
-        cv2.line(bgr_img, (cx, cy - 14), (cx, cy + 14), (0, 240, 240), 1)
-        cv2.circle(bgr_img, (cx, cy), 8, (0, 240, 240), 1)
+        if with_hud and bno_data is not None:
+            # Draw HUD overlays on camera frame
+            h, w = bgr_img.shape[:2]
+            cx, cy = w // 2, h // 2
 
-        # 2. Header HUD: Mode & Target Info
-        cv2.putText(
-            bgr_img,
-            "MUJOCO VIRTUAL CAM",
-            (8, 18),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.40,
-            (0, 255, 255),
-            1,
-            cv2.LINE_AA,
-        )
+            # 1. Target HUD Reticle (crosshair)
+            cv2.line(bgr_img, (cx - 14, cy), (cx + 14, cy), (0, 240, 240), 1)
+            cv2.line(bgr_img, (cx, cy - 14), (cx, cy + 14), (0, 240, 240), 1)
+            cv2.circle(bgr_img, (cx, cy), 8, (0, 240, 240), 1)
 
-        if target_info and target_info.get("target_found", False):
-            dist = target_info.get("distance_m", 0.0)
-            az = target_info.get("azimuth_deg", 0.0)
-            el = target_info.get("elevation_deg", 0.0)
-            pop = target_info.get("pop_count", 0)
-            active = target_info.get("active_count", 10)
-            hud_target = f"BALLOON:{dist:4.1f}m [Az:{az:+4.1f} El:{el:+4.1f}] POP:{pop} ({active}/10)"
+            # 2. Header HUD: Mode & Target Info
             cv2.putText(
                 bgr_img,
-                hud_target,
-                (8, 34),
+                "MUJOCO VIRTUAL CAM",
+                (8, 18),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.33,
-                (100, 220, 255),
+                0.40,
+                (0, 255, 255),
                 1,
                 cv2.LINE_AA,
             )
 
-            if target_info.get("just_popped"):
-                cv2.rectangle(bgr_img, (cx - 90, cy - 16), (cx + 90, cy + 16), (0, 200, 50), -1)
+            if target_info and target_info.get("target_found", False):
+                dist = target_info.get("distance_m", 0.0)
+                az = target_info.get("azimuth_deg", 0.0)
+                el = target_info.get("elevation_deg", 0.0)
+                pop = target_info.get("pop_count", 0)
+                active = target_info.get("active_count", 10)
+                hud_target = f"BALLOON:{dist:4.1f}m [Az:{az:+4.1f} El:{el:+4.1f}] POP:{pop} ({active}/10)"
                 cv2.putText(
                     bgr_img,
-                    "TARGET DESTROYED!",
-                    (cx - 80, cy + 5),
+                    hud_target,
+                    (8, 34),
                     cv2.FONT_HERSHEY_SIMPLEX,
-                    0.45,
-                    (255, 255, 255),
+                    0.33,
+                    (100, 220, 255),
                     1,
                     cv2.LINE_AA,
                 )
 
-        depth = bno_data.get("depth_m", 1.5)
-        pitch = bno_data.get("pitch", 0.0)
-        yaw = bno_data.get("yaw", 0.0)
-        hud_str = f"DEPTH:{depth:4.1f}m  PITCH:{pitch:+4.1f}deg  YAW:{yaw:+4.1f}deg"
-        cv2.putText(
-            bgr_img,
-            hud_str,
-            (8, h - 10),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.32,
-            (200, 255, 200),
-            1,
-            cv2.LINE_AA,
-        )
+                if target_info.get("just_popped"):
+                    cv2.rectangle(bgr_img, (cx - 90, cy - 16), (cx + 90, cy + 16), (0, 200, 50), -1)
+                    cv2.putText(
+                        bgr_img,
+                        "TARGET DESTROYED!",
+                        (cx - 80, cy + 5),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.45,
+                        (255, 255, 255),
+                        1,
+                        cv2.LINE_AA,
+                    )
 
-        # Surface breach warning overlay
-        if bno_data.get("is_surfaced", False):
-            cv2.rectangle(bgr_img, (cx - 95, 40), (cx + 95, 60), (0, 0, 180), -1)
+            depth = bno_data.get("depth_m", 1.5)
+            pitch = bno_data.get("pitch", 0.0)
+            yaw = bno_data.get("yaw", 0.0)
+            hud_str = f"DEPTH:{depth:4.1f}m  PITCH:{pitch:+4.1f}deg  YAW:{yaw:+4.1f}deg"
             cv2.putText(
                 bgr_img,
-                "SURFACE BREACH",
-                (cx - 75, 55),
+                hud_str,
+                (8, h - 10),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.42,
-                (255, 255, 255),
+                0.32,
+                (200, 255, 200),
                 1,
                 cv2.LINE_AA,
             )
+
+            # Surface breach warning overlay
+            if bno_data.get("is_surfaced", False):
+                cv2.rectangle(bgr_img, (cx - 95, 40), (cx + 95, 60), (0, 0, 180), -1)
+                cv2.putText(
+                    bgr_img,
+                    "SURFACE BREACH",
+                    (cx - 75, 55),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.42,
+                    (255, 255, 255),
+                    1,
+                    cv2.LINE_AA,
+                )
 
         # Compress to JPEG bytes
         success, encoded_jpg = cv2.imencode(".jpg", bgr_img, self.encode_param)
@@ -867,8 +871,8 @@ def main():
                     # 4. Publish Virtual Camera Images (25 FPS)
                     if now - last_camera_time >= camera_period:
                         last_camera_time = now
-                        # Front camera feed
-                        jpeg_bytes = sim.render_front_camera(bno_payload, target_info)
+                        # Front camera feed (Raw image without HUD overlays for vision processing)
+                        jpeg_bytes = sim.render_front_camera(bno_payload, target_info, with_hud=False)
                         if jpeg_bytes is not None:
                             node.send_output("image", pa.array([jpeg_bytes]))
                         # Third-person overhead chase camera feed

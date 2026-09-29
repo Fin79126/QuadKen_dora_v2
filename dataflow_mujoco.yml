@@ -3,12 +3,29 @@
 # Step 2: Autonomous Guidance, Navigation & Control (ai_guidance.py)
 nodes:
   # ============================================================
+  # PC PERCEPTION NODE (Step 3 Underwater Vision & Balloon Detector)
+  # ============================================================
+  - id: balloon_detector
+    path: nodes/pc/balloon_detector.py
+    inputs:
+      image:
+        source: mujoco_sim/image
+        queue_size: 2
+      bno_data:
+        source: mujoco_sim/bno_data
+        queue_size: 2
+    outputs:
+      - target_relative_info
+      - image_annotated
+
+  # ============================================================
   # PC AUTONOMOUS GUIDANCE & VISUALIZATION NODES (Step 2 GNC)
   # ============================================================
   - id: ai_guidance
     path: nodes/pc/ai_guidance.py
     inputs:
       tick: dora/timer/millis/20
+      # Step 3 Verification: Ground Truth input (switchable to balloon_detector/target_relative_info in Step 4)
       target_relative_info:
         source: mujoco_sim/target_relative_info
         queue_size: 5
@@ -42,7 +59,7 @@ nodes:
     path: nodes/pc/visualizer.py
     inputs:
       image:
-        source: mujoco_sim/image
+        source: balloon_detector/image_annotated
         queue_size: 5
       image_overhead:
         source: mujoco_sim/image_overhead
@@ -66,6 +83,9 @@ nodes:
         source: mujoco_sim/esp_telemetry
         queue_size: 5
       target_relative_info:
+        source: balloon_detector/target_relative_info
+        queue_size: 5
+      target_relative_info_gt:
         source: mujoco_sim/target_relative_info
         queue_size: 5
 

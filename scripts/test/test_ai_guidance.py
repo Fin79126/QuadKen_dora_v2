@@ -12,7 +12,7 @@ import math
 import numpy as np
 
 # Ensure workspace root is in path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from nodes.simulation.mujoco_node import QuadKenMuJoCoSim
 from nodes.pc.compute import UnderwaterDynamics

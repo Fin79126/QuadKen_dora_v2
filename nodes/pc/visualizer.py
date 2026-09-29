@@ -92,7 +92,7 @@ def main():
                 raw_value = event["value"]
 
                 # 1. Handle Camera Images (Underwater Feed & Overhead Chase Feed)
-                if input_id == "image":
+                if input_id in ("image", "image_annotated"):
                     try:
                         img_data = raw_value.to_pylist()[0]
                         if isinstance(img_data, bytes):
@@ -100,7 +100,11 @@ def main():
                             frame_bgr = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
                             if frame_bgr is not None:
                                 frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-                                rr.log("camera/feed", rr.Image(frame_rgb))
+                                log_topic = "camera/feed" if input_id == "image_annotated" else "camera/raw_feed"
+                                rr.log(log_topic, rr.Image(frame_rgb))
+                                # Also mirror to camera/feed if raw image and no annotated available yet
+                                if input_id == "image":
+                                    rr.log("camera/feed", rr.Image(frame_rgb))
                         elif hasattr(raw_value, "to_numpy"):
                             np_img = raw_value.to_numpy()
                             rr.log("camera/feed", rr.Image(np_img))
@@ -232,11 +236,14 @@ def main():
                     except Exception as e:
                         print(f"[Visualizer] Compute status log error: {e}")
 
-                # 7. Handle Target Balloon Relative Telemetry
-                elif input_id == "target_relative_info":
+                # 7. Handle Target Balloon Relative Telemetry (Vision Estimate & Ground Truth)
+                elif input_id in ("target_relative_info", "target_relative_info_gt"):
                     try:
                         raw_bytes = raw_value.to_pylist()[0]
                         target_info = json.loads(raw_bytes if isinstance(raw_bytes, str) else raw_bytes.decode("utf-8"))
+
+                        is_gt = (input_id == "target_relative_info_gt")
+                        prefix = "balloon_gt" if is_gt else "balloon_vision"
 
                         if target_info.get("target_found", False):
                             dist = float(target_info.get("distance_m", 0.0))
@@ -244,24 +251,29 @@ def main():
                             el = float(target_info.get("elevation_deg", 0.0))
                             pop_cnt = int(target_info.get("pop_count", 0))
 
+                            rr.log(f"{prefix}/distance_m", rr_Scalar(dist))
+                            rr.log(f"{prefix}/azimuth_deg", rr_Scalar(az))
+                            rr.log(f"{prefix}/elevation_deg", rr_Scalar(el))
+                            # Default "balloon/" scalar plot tracks vision (or fallback to GT)
                             rr.log("balloon/distance_m", rr_Scalar(dist))
                             rr.log("balloon/azimuth_deg", rr_Scalar(az))
                             rr.log("balloon/elevation_deg", rr_Scalar(el))
-                            rr.log("balloon/popped_count", rr_Scalar(pop_cnt))
 
-                            pos_w = target_info.get("target_pos_world", [0, 0, 0])
-                            rr.log("world/balloon_target", rr.Points3D([pos_w], radii=0.25, colors=[[255, 30, 80]]))
+                            if is_gt:
+                                rr.log("balloon/popped_count", rr_Scalar(pop_cnt))
+                                pos_w = target_info.get("target_pos_world", [0, 0, 0])
+                                rr.log("world/balloon_target", rr.Points3D([pos_w], radii=0.25, colors=[[255, 30, 80]]))
 
-                            all_balloons = target_info.get("all_balloons_world", [])
-                            if all_balloons:
-                                rr.log("world/all_balloons", rr.Points3D(all_balloons, radii=0.18, colors=[[255, 120, 160]]))
+                                all_balloons = target_info.get("all_balloons_world", [])
+                                if all_balloons:
+                                    rr.log("world/all_balloons", rr.Points3D(all_balloons, radii=0.18, colors=[[255, 120, 160]]))
 
-                            active_cnt = target_info.get("active_count", None)
-                            if active_cnt is not None:
-                                rr.log("balloon/active_count", rr_Scalar(float(active_cnt)))
+                                active_cnt = target_info.get("active_count", None)
+                                if active_cnt is not None:
+                                    rr.log("balloon/active_count", rr_Scalar(float(active_cnt)))
 
-                            if target_info.get("just_popped", False):
-                                rr.log("status_text/balloon", rr.TextLog(f"*** BALLOON DESTROYED! Count: {pop_cnt} (Remaining: {active_cnt}) ***"))
+                                if target_info.get("just_popped", False):
+                                    rr.log("status_text/balloon", rr.TextLog(f"*** BALLOON DESTROYED! Count: {pop_cnt} (Remaining: {active_cnt}) ***"))
                     except Exception as e:
                         print(f"[Visualizer] Target info log error: {e}")
 
