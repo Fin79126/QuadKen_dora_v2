@@ -8,6 +8,7 @@ dependencies = [
     "dora-rerun>=0.5.0",
     "dora-rs>=1.0.1",
     "dora-rs-cli>=1.0.1",
+    "mujoco>=3.14.0",
     "numpy>=2.4.6",
     "opencv-python-headless>=4.8.0",
     "opentelemetry-api>=1.45.0",
