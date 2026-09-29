@@ -4,11 +4,11 @@
     Specifications:
       - Main Cylindrical Hull: Diameter 0.24m (radius 0.12m), Length 0.70m, Weight ~8.0kg
       - 4 Legs: Length 0.30m, Opening angle 0-90 degrees (Inner to Outer deployment)
-      - Translucent Drag-Steering Membranes attached to legs
+      - 4 Inter-leg Deformable Membranes (Skins) connecting adjacent legs like an umbrella/webbing
       - Dual BLDC Thrusters: Diameter 0.04m, tandem in-line inside the 4 legs, counter-rotating to cancel torque
       - Head Ballast System: 4 water-intake servos at the front dome
       - Net Positive Buoyancy: Slight positive buoyancy (~+0.3kgf) with nose-up pitch trim
-      - Supports 3D Roll / Pitch / Yaw rotation
+      - Full 3D Roll / Pitch / Yaw rotation
   -->
 
   <compiler angle="degree" coordinate="local" inertiafromgeom="auto"/>
@@ -29,7 +29,7 @@
     <default class="leg_joint">
       <joint type="hinge" limited="true" range="0 90" damping="1.5" stiffness="0.2"/>
     </default>
-    <!-- Default for Actuators: 0 to 1.5708 rad corresponds to 0 to 90 degrees -->
+    <!-- Default for Actuators: 0 to 1.5708 rad (corresponds to 0 to 90 deg) -->
     <default class="servo_actuator">
       <position kp="50" kv="6" ctrlrange="0 1.5708" forcelimited="true" forcerange="-20 20"/>
     </default>
@@ -49,8 +49,8 @@
     <material name="thruster_mat" rgba="0.1 0.1 0.1 1.0" shininess="0.9"/>
     <material name="propeller_cw" rgba="0.1 0.6 0.8 0.9"/>
     <material name="propeller_ccw" rgba="0.8 0.4 0.1 0.9"/>
-    <!-- Translucent flexible membrane -->
-    <material name="membrane_mat" rgba="0.80 0.92 1.0 0.45" shininess="0.9" specular="0.8"/>
+    <!-- Translucent flexible inter-leg membrane -->
+    <material name="membrane_mat" rgba="0.80 0.92 1.0 0.55" shininess="0.9" specular="0.8"/>
   </asset>
 
   <worldbody>
@@ -119,7 +119,7 @@
       <geom name="thruster_shaft" type="cylinder" fromto="0 0 0  -0.20 0 0" size="0.008" material="frame_mat" mass="0.1"/>
 
       <!-- ========================================== -->
-      <!-- 3. FOUR LEGS & MEMBRANES (ESP1)           -->
+      <!-- 3. FOUR CLEAN STRUT LEGS (ESP1)            -->
       <!-- Mounted on Aft Rim (X=0, R=0.12m), Length 30cm -->
       <!-- Hinges open radially from INNER to OUTER (0 to 90 deg) -->
       <!-- ========================================== -->
@@ -128,45 +128,32 @@
       <!-- axis="0 1 0" rotates from -X towards +Z (Opens outward/upward) -->
       <body name="leg_top" pos="0 0 0.12">
         <joint name="joint_leg_top" class="leg_joint" pos="0 0 0" axis="0 1 0"/>
-        <!-- Main strut 30cm rearward (-X) when angle=0 -->
-        <geom name="strut_top" type="capsule" fromto="0 0 0  -0.30 0 0" size="0.01" material="leg_mat" mass="0.12"/>
-        <geom name="tip_top" type="sphere" pos="-0.30 0 0" size="0.012" material="frame_mat" mass="0.02"/>
-        <!-- Membrane wings attached to top leg (Right wing and Left wing) -->
-        <geom name="membrane_top_r" type="box" pos="-0.15 -0.04 0" size="0.14 0.04 0.002" material="membrane_mat" contype="0" conaffinity="0" mass="0.02"/>
-        <geom name="membrane_top_l" type="box" pos="-0.15  0.04 0" size="0.14 0.04 0.002" material="membrane_mat" contype="0" conaffinity="0" mass="0.02"/>
+        <geom name="strut_top" type="capsule" fromto="0 0 0  -0.30 0 0" size="0.012" material="leg_mat" mass="0.14"/>
+        <geom name="tip_top" type="sphere" pos="-0.30 0 0" size="0.014" material="frame_mat" mass="0.02"/>
       </body>
 
       <!-- LEG 1: RIGHT (pos: 0, -0.12m, 0) -->
       <!-- axis="0 0 1" rotates from -X towards -Y (Opens outward/rightward) -->
       <body name="leg_right" pos="0 -0.12 0">
         <joint name="joint_leg_right" class="leg_joint" pos="0 0 0" axis="0 0 1"/>
-        <geom name="strut_right" type="capsule" fromto="0 0 0  -0.30 0 0" size="0.01" material="leg_mat" mass="0.12"/>
-        <geom name="tip_right" type="sphere" pos="-0.30 0 0" size="0.012" material="frame_mat" mass="0.02"/>
-        <!-- Membrane wings attached to right leg (Top wing and Bottom wing) -->
-        <geom name="membrane_right_t" type="box" pos="-0.15 0  0.04" size="0.14 0.002 0.04" material="membrane_mat" contype="0" conaffinity="0" mass="0.02"/>
-        <geom name="membrane_right_b" type="box" pos="-0.15 0 -0.04" size="0.14 0.002 0.04" material="membrane_mat" contype="0" conaffinity="0" mass="0.02"/>
+        <geom name="strut_right" type="capsule" fromto="0 0 0  -0.30 0 0" size="0.012" material="leg_mat" mass="0.14"/>
+        <geom name="tip_right" type="sphere" pos="-0.30 0 0" size="0.014" material="frame_mat" mass="0.02"/>
       </body>
 
       <!-- LEG 2: BOTTOM (pos: 0, 0, -0.12m) -->
       <!-- axis="0 -1 0" rotates from -X towards -Z (Opens outward/downward) -->
       <body name="leg_bottom" pos="0 0 -0.12">
         <joint name="joint_leg_bottom" class="leg_joint" pos="0 0 0" axis="0 -1 0"/>
-        <geom name="strut_bottom" type="capsule" fromto="0 0 0  -0.30 0 0" size="0.01" material="leg_mat" mass="0.12"/>
-        <geom name="tip_bottom" type="sphere" pos="-0.30 0 0" size="0.012" material="frame_mat" mass="0.02"/>
-        <!-- Membrane wings attached to bottom leg (Right wing and Left wing) -->
-        <geom name="membrane_bottom_r" type="box" pos="-0.15 -0.04 0" size="0.14 0.04 0.002" material="membrane_mat" contype="0" conaffinity="0" mass="0.02"/>
-        <geom name="membrane_bottom_l" type="box" pos="-0.15  0.04 0" size="0.14 0.04 0.002" material="membrane_mat" contype="0" conaffinity="0" mass="0.02"/>
+        <geom name="strut_bottom" type="capsule" fromto="0 0 0  -0.30 0 0" size="0.012" material="leg_mat" mass="0.14"/>
+        <geom name="tip_bottom" type="sphere" pos="-0.30 0 0" size="0.014" material="frame_mat" mass="0.02"/>
       </body>
 
       <!-- LEG 3: LEFT (pos: 0, +0.12m, 0) -->
       <!-- axis="0 0 -1" rotates from -X towards +Y (Opens outward/leftward) -->
       <body name="leg_left" pos="0 0.12 0">
         <joint name="joint_leg_left" class="leg_joint" pos="0 0 0" axis="0 0 -1"/>
-        <geom name="strut_left" type="capsule" fromto="0 0 0  -0.30 0 0" size="0.01" material="leg_mat" mass="0.12"/>
-        <geom name="tip_left" type="sphere" pos="-0.30 0 0" size="0.012" material="frame_mat" mass="0.02"/>
-        <!-- Membrane wings attached to left leg (Top wing and Bottom wing) -->
-        <geom name="membrane_left_t" type="box" pos="-0.15 0  0.04" size="0.14 0.002 0.04" material="membrane_mat" contype="0" conaffinity="0" mass="0.02"/>
-        <geom name="membrane_left_b" type="box" pos="-0.15 0 -0.04" size="0.14 0.002 0.04" material="membrane_mat" contype="0" conaffinity="0" mass="0.02"/>
+        <geom name="strut_left" type="capsule" fromto="0 0 0  -0.30 0 0" size="0.012" material="leg_mat" mass="0.14"/>
+        <geom name="tip_left" type="sphere" pos="-0.30 0 0" size="0.014" material="frame_mat" mass="0.02"/>
       </body>
 
       <!-- ========================================== -->
@@ -194,6 +181,52 @@
   </worldbody>
 
   <!-- ============================================================ -->
+  <!-- DEFORMABLE SKINS: MEMBRANES CONNECTING ADJACENT LEGS        -->
+  <!-- 4 translucent skins stretch between neighboring legs like an umbrella -->
+  <!-- ============================================================ -->
+  <deformable>
+    <!-- 1. Membrane between Leg TOP and Leg RIGHT -->
+    <!-- Vertices: [0: Top Root, 1: Top Tip, 2: Right Tip, 3: Right Root] -->
+    <skin name="membrane_top_right"
+          vertex="0 0 0.12   -0.30 0 0.12   -0.30 -0.12 0   0 -0.12 0"
+          face="0 1 2   0 2 3"
+          material="membrane_mat">
+      <bone body="leg_top"   bindpos="0 0 0.12"  bindquat="1 0 0 0" vertid="0 1" vertweight="1.0 1.0"/>
+      <bone body="leg_right" bindpos="0 -0.12 0" bindquat="1 0 0 0" vertid="3 2" vertweight="1.0 1.0"/>
+    </skin>
+
+    <!-- 2. Membrane between Leg RIGHT and Leg BOTTOM -->
+    <!-- Vertices: [0: Right Root, 1: Right Tip, 2: Bottom Tip, 3: Bottom Root] -->
+    <skin name="membrane_right_bottom"
+          vertex="0 -0.12 0   -0.30 -0.12 0   -0.30 0 -0.12   0 0 -0.12"
+          face="0 1 2   0 2 3"
+          material="membrane_mat">
+      <bone body="leg_right"  bindpos="0 -0.12 0" bindquat="1 0 0 0" vertid="0 1" vertweight="1.0 1.0"/>
+      <bone body="leg_bottom" bindpos="0 0 -0.12" bindquat="1 0 0 0" vertid="3 2" vertweight="1.0 1.0"/>
+    </skin>
+
+    <!-- 3. Membrane between Leg BOTTOM and Leg LEFT -->
+    <!-- Vertices: [0: Bottom Root, 1: Bottom Tip, 2: Left Tip, 3: Left Root] -->
+    <skin name="membrane_bottom_left"
+          vertex="0 0 -0.12   -0.30 0 -0.12   -0.30 0.12 0   0 0.12 0"
+          face="0 1 2   0 2 3"
+          material="membrane_mat">
+      <bone body="leg_bottom" bindpos="0 0 -0.12" bindquat="1 0 0 0" vertid="0 1" vertweight="1.0 1.0"/>
+      <bone body="leg_left"   bindpos="0 0.12 0"  bindquat="1 0 0 0" vertid="3 2" vertweight="1.0 1.0"/>
+    </skin>
+
+    <!-- 4. Membrane between Leg LEFT and Leg TOP -->
+    <!-- Vertices: [0: Left Root, 1: Left Tip, 2: Top Tip, 3: Top Root] -->
+    <skin name="membrane_left_top"
+          vertex="0 0.12 0   -0.30 0.12 0   -0.30 0 0.12   0 0 0.12"
+          face="0 1 2   0 2 3"
+          material="membrane_mat">
+      <bone body="leg_left" bindpos="0 0.12 0" bindquat="1 0 0 0" vertid="0 1" vertweight="1.0 1.0"/>
+      <bone body="leg_top"  bindpos="0 0 0.12" bindquat="1 0 0 0" vertid="3 2" vertweight="1.0 1.0"/>
+    </skin>
+  </deformable>
+
+  <!-- ============================================================ -->
   <!-- ACTUATORS DEFINITION                                         -->
   <!-- Matching QuadKen Dora Architecture (ESP1 + ESP2)             -->
   <!-- ============================================================ -->
@@ -205,14 +238,14 @@
     <motor name="bldc_thruster_1" site="thrust_site_1" gear="1.0 0 0  0.02 0 0" ctrllimited="true" ctrlrange="0 30"/>
     <motor name="bldc_thruster_2" site="thrust_site_2" gear="1.0 0 0 -0.02 0 0" ctrllimited="true" ctrlrange="0 30"/>
 
-    <!-- 4x Membrane Leg Deployment Servos (0 deg = Closed/Streamlined, 90 deg = Full Outward Open) -->
+    <!-- 4x Membrane Leg Deployment Servos (0 rad = Closed/Streamlined, 1.5708 rad = Full Outward Open) -->
     <position name="leg_servo_top" joint="joint_leg_top" class="servo_actuator"/>
     <position name="leg_servo_right" joint="joint_leg_right" class="servo_actuator"/>
     <position name="leg_servo_bottom" joint="joint_leg_bottom" class="servo_actuator"/>
     <position name="leg_servo_left" joint="joint_leg_left" class="servo_actuator"/>
 
     <!-- ===== ESP2: HEAD BALLAST BUOYANCY UNIT ===== -->
-    <!-- 4x Head Water-Intake Ballast Servos (0 deg = Closed, 90 deg = Full intake opening) -->
+    <!-- 4x Head Water-Intake Ballast Servos (0 rad = Closed, 1.5708 rad = Full intake opening) -->
     <position name="ballast_servo_1" joint="joint_ballast_1" class="servo_actuator"/>
     <position name="ballast_servo_2" joint="joint_ballast_2" class="servo_actuator"/>
     <position name="ballast_servo_3" joint="joint_ballast_3" class="servo_actuator"/>
