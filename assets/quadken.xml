@@ -4,6 +4,7 @@
     Specifications:
       - Main Cylindrical Hull: Diameter 0.24m (radius 0.12m), Length 0.70m, Weight ~8.0kg
       - 4 Legs: Length 0.30m, Opening angle 0-90 degrees (Inner to Outer deployment)
+      - Direct Degree Control: Actuators operate directly on 0 to 90 degrees!
       - 4 Inter-leg Deformable Membranes (Skins) connecting adjacent legs like an umbrella/webbing
       - Dual BLDC Thrusters: Diameter 0.04m, tandem in-line inside the 4 legs, counter-rotating to cancel torque
       - Head Ballast System: 4 water-intake servos at the front dome
@@ -13,7 +14,7 @@
 
   <compiler angle="degree" coordinate="local" inertiafromgeom="auto"/>
 
-  <option density="1000" viscosity="0.001" gravity="0 0 -9.81" integrator="RK4" timestep="0.005">
+  <option density="1000" viscosity="0.001" gravity="0 0 -9.81" integrator="implicitfast" timestep="0.005">
     <flag contact="enable" energy="enable"/>
   </option>
 
@@ -27,11 +28,13 @@
     <geom condim="3" friction="0.8 0.1 0.1"/>
     <!-- Default for Leg joints: Opens 0 to 90 deg from inner to outer -->
     <default class="leg_joint">
-      <joint type="hinge" limited="true" range="0 90" damping="1.5" stiffness="0.2"/>
+      <joint type="hinge" limited="true" range="0 90" damping="1.5" stiffness="0.1"/>
     </default>
-    <!-- Default for Actuators: 0 to 1.5708 rad (corresponds to 0 to 90 deg) -->
+    <!-- Default for Servo Actuators: Direct 0 to 90 Degree control -->
+    <!-- Gain 0.5 N*m/deg, bias scales rad to deg seamlessly -->
     <default class="servo_actuator">
-      <position kp="50" kv="6" ctrlrange="0 1.5708" forcelimited="true" forcerange="-20 20"/>
+      <general dyntype="none" biastype="affine" gainprm="0.5 0 0" biasprm="0 -28.64789 -0.05"
+               ctrlrange="0 90" forcelimited="true" forcerange="-25 25"/>
     </default>
   </default>
 
@@ -161,19 +164,19 @@
       <!-- 4 rotational valve cylinders at nose       -->
       <!-- ========================================== -->
       <body name="ballast_valve_1" pos="0.65 0 0.07">
-        <joint name="joint_ballast_1" type="hinge" axis="0 1 0" range="0 90" damping="0.5"/>
+        <joint name="joint_ballast_1" class="leg_joint" axis="0 1 0"/>
         <geom name="geom_ballast_1" type="cylinder" fromto="0 -0.015 0  0 0.015 0" size="0.015" material="intake_mat" mass="0.03"/>
       </body>
       <body name="ballast_valve_2" pos="0.65 -0.07 0">
-        <joint name="joint_ballast_2" type="hinge" axis="0 0 1" range="0 90" damping="0.5"/>
+        <joint name="joint_ballast_2" class="leg_joint" axis="0 0 1"/>
         <geom name="geom_ballast_2" type="cylinder" fromto="0 0 -0.015  0 0 0.015" size="0.015" material="intake_mat" mass="0.03"/>
       </body>
       <body name="ballast_valve_3" pos="0.65 0 -0.07">
-        <joint name="joint_ballast_3" type="hinge" axis="0 -1 0" range="0 90" damping="0.5"/>
+        <joint name="joint_ballast_3" class="leg_joint" axis="0 -1 0"/>
         <geom name="geom_ballast_3" type="cylinder" fromto="0 -0.015 0  0 0.015 0" size="0.015" material="intake_mat" mass="0.03"/>
       </body>
       <body name="ballast_valve_4" pos="0.65 0.07 0">
-        <joint name="joint_ballast_4" type="hinge" axis="0 0 -1" range="0 90" damping="0.5"/>
+        <joint name="joint_ballast_4" class="leg_joint" axis="0 0 -1"/>
         <geom name="geom_ballast_4" type="cylinder" fromto="0 0 -0.015  0 0 0.015" size="0.015" material="intake_mat" mass="0.03"/>
       </body>
 
@@ -229,27 +232,26 @@
   <!-- ============================================================ -->
   <!-- ACTUATORS DEFINITION                                         -->
   <!-- Matching QuadKen Dora Architecture (ESP1 + ESP2)             -->
+  <!-- Control inputs are directly in DEGREES [0 to 90]!            -->
   <!-- ============================================================ -->
   <actuator>
     <!-- ===== ESP1: THRUST & DRAG-STEERING UNIT ===== -->
     <!-- 2x Forward BLDC Thrusters (Tandem In-Line, Counter-Rotating) -->
-    <!-- Gear: [Fx, Fy, Fz, Tx, Ty, Tz]. Fx=+1 pushes forward (+X). -->
-    <!-- Thruster 1 has +0.02 roll torque, Thruster 2 has -0.02 roll torque (Cancels Moment!) -->
     <motor name="bldc_thruster_1" site="thrust_site_1" gear="1.0 0 0  0.02 0 0" ctrllimited="true" ctrlrange="0 30"/>
     <motor name="bldc_thruster_2" site="thrust_site_2" gear="1.0 0 0 -0.02 0 0" ctrllimited="true" ctrlrange="0 30"/>
 
-    <!-- 4x Membrane Leg Deployment Servos (0 rad = Closed/Streamlined, 1.5708 rad = Full Outward Open) -->
-    <position name="leg_servo_top" joint="joint_leg_top" class="servo_actuator"/>
-    <position name="leg_servo_right" joint="joint_leg_right" class="servo_actuator"/>
-    <position name="leg_servo_bottom" joint="joint_leg_bottom" class="servo_actuator"/>
-    <position name="leg_servo_left" joint="joint_leg_left" class="servo_actuator"/>
+    <!-- 4x Membrane Leg Deployment Servos (Direct 0 to 90 degrees!) -->
+    <general name="leg_servo_top" joint="joint_leg_top" class="servo_actuator"/>
+    <general name="leg_servo_right" joint="joint_leg_right" class="servo_actuator"/>
+    <general name="leg_servo_bottom" joint="joint_leg_bottom" class="servo_actuator"/>
+    <general name="leg_servo_left" joint="joint_leg_left" class="servo_actuator"/>
 
     <!-- ===== ESP2: HEAD BALLAST BUOYANCY UNIT ===== -->
-    <!-- 4x Head Water-Intake Ballast Servos (0 rad = Closed, 1.5708 rad = Full intake opening) -->
-    <position name="ballast_servo_1" joint="joint_ballast_1" class="servo_actuator"/>
-    <position name="ballast_servo_2" joint="joint_ballast_2" class="servo_actuator"/>
-    <position name="ballast_servo_3" joint="joint_ballast_3" class="servo_actuator"/>
-    <position name="ballast_servo_4" joint="joint_ballast_4" class="servo_actuator"/>
+    <!-- 4x Head Water-Intake Ballast Servos (Direct 0 to 90 degrees!) -->
+    <general name="ballast_servo_1" joint="joint_ballast_1" class="servo_actuator"/>
+    <general name="ballast_servo_2" joint="joint_ballast_2" class="servo_actuator"/>
+    <general name="ballast_servo_3" joint="joint_ballast_3" class="servo_actuator"/>
+    <general name="ballast_servo_4" joint="joint_ballast_4" class="servo_actuator"/>
   </actuator>
 
   <!-- ============================================================ -->

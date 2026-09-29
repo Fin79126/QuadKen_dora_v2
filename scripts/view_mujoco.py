@@ -49,7 +49,7 @@ def main():
     print("\nTips:")
     print("  - [Spacebar]: Pause / Resume physics")
     print("  - To control actuators manually, open the right 'Control' panel in the viewer window.")
-    print("  - Units note: 1.0 on slider = 1 radian (~57.3 deg). 1.57 = 90 deg.")
+    print("  - Units note: Control sliders are directly in DEGREES [0 to 90]!")
     if not auto_animate:
         print("  - Run with '--demo' to see automated leg deployment.")
 
@@ -60,12 +60,11 @@ def main():
             t = step_start - start_time
 
             if auto_animate:
-                # Oscillate legs 0 to 60 deg (0 to ~1.05 rad)
+                # Oscillate legs 0 to 60 degrees directly
                 cycle_angle_deg = 30.0 + 30.0 * math.sin(t * 1.5)
-                cycle_angle_rad = math.radians(cycle_angle_deg)
                 for i in range(2, 6):
-                    data.ctrl[i] = cycle_angle_rad
-                # Forward thrust
+                    data.ctrl[i] = cycle_angle_deg
+                # Forward thrust (5 N)
                 data.ctrl[0] = 5.0
                 data.ctrl[1] = 5.0
 
