@@ -67,7 +67,7 @@ class QuadKenMuJoCoSim:
         self.renderer = mujoco.Renderer(self.model, height=self.cam_height, width=self.cam_width)
 
         # Actuator parameters
-        self.max_thrust_n = 25.0  # Max thrust per BLDC thruster (N)
+        self.max_thrust_n = 200.0  # Max thrust per BLDC thruster (N)
 
         # Cached actuator commands
         self.target_bldc = [0.0, 0.0]        # PWM 0-100

@@ -27,6 +27,8 @@ except ImportError:
 
 # Suppress Pygame welcome banner
 os.environ["PYGAME_HIDE_SUPPORT_PROMPT"] = "1"
+# Switch Pro Controller requires HIDAPI Switch driver to correctly parse input packets
+# and prevent IMU/gyro telemetry from triggering ghost button presses (e.g. E-Stop flickering).
 os.environ["SDL_JOYSTICK_HIDAPI_SWITCH"] = "1"
 os.environ["SDL_JOYSTICK_HIDAPI_SWITCH_PLAYER_LED"] = "0"
 os.environ["SDL_JOYSTICK_HIDAPI_SWITCH_HOME_LED"] = "0"
@@ -35,8 +37,10 @@ import pygame
 
 def init_joystick():
     try:
-        pygame.init()
-        pygame.joystick.init()
+        if not pygame.get_init():
+            pygame.init()
+        if not pygame.joystick.get_init():
+            pygame.joystick.init()
         joystick_count = pygame.joystick.get_count()
         if joystick_count > 0:
             js = pygame.joystick.Joystick(0)
@@ -63,6 +67,7 @@ def main():
     ballast = 0.0       # Ballast intake (-1.0: Purge/Float, 0.0: Neutral, 1.0: Intake/Sink)
     brake = False       # Full 4-leg deployment for water resistance braking
     e_stop = False      # Emergency stop
+    prev_estop_btn = False
     seq = 0
 
     try:
@@ -73,42 +78,80 @@ def main():
                 break
 
             if event_type == "INPUT":
-                pygame.event.pump()
-                _ = pygame.event.get()
+                # Handle hotplugging events
+                for pg_event in pygame.event.get():
+                    if pg_event.type == pygame.JOYDEVICEADDED:
+                        if joystick is None:
+                            print("[Controller] Gamepad plugged in. Initializing...")
+                            joystick = init_joystick()
+                    elif pg_event.type == pygame.JOYDEVICEREMOVED:
+                        print("[Controller] Gamepad disconnected. Falling back to simulated mode.")
+                        if joystick is not None:
+                            try:
+                                joystick.quit()
+                            except Exception:
+                                pass
+                            joystick = None
+
+                # Periodic reconnect check if no gamepad is active (every ~2s at 100ms ticks)
+                if joystick is None and seq % 20 == 0:
+                    if pygame.joystick.get_count() > 0:
+                        joystick = init_joystick()
+
                 raw_axes = []
 
                 if joystick is not None:
-                    num_axes = joystick.get_numaxes()
-                    raw_axes = [round(float(joystick.get_axis(i)), 3) for i in range(num_axes)]
+                    try:
+                        num_axes = joystick.get_numaxes()
+                        raw_axes = [round(float(joystick.get_axis(i)), 3) for i in range(num_axes)]
 
-                    # Typical gamepad mapping:
-                    # Axis 1: Left Stick Y -> Throttle (forward-only: 0.0 to 1.0)
-                    raw_y = -raw_axes[1] if num_axes > 1 else 0.0
-                    raw_x = raw_axes[0] if num_axes > 0 else 0.0
-                    raw_rx = raw_axes[2] if num_axes > 2 else 0.0
-                    raw_ry = -raw_axes[3] if num_axes > 3 else 0.0
+                        # Gamepad mapping:
+                        # Left Stick: Whole-body propulsion ONLY (Y-axis: forward thrust 0.0 to 1.0)
+                        # Left stick horizontal tilt (raw_x) is intentionally ignored.
+                        raw_y = -raw_axes[1] if num_axes > 1 else 0.0
+                        raw_rx = raw_axes[2] if num_axes > 2 else 0.0
+                        raw_ry = -raw_axes[3] if num_axes > 3 else 0.0
 
-                    deadband = 0.08
-                    # Forward-only propulsion: clamp negative (backward) to 0.0
-                    throttle = max(0.0, raw_y) if abs(raw_y) > deadband else 0.0
-                    steer_yaw = raw_rx if abs(raw_rx) > deadband else (raw_x if abs(raw_x) > deadband else 0.0)
-                    steer_pitch = raw_ry if abs(raw_ry) > deadband else 0.0
+                        deadband = 0.08
+                        # Forward-only propulsion: clamp negative (backward) to 0.0
+                        throttle = max(0.0, raw_y) if abs(raw_y) > deadband else 0.0
 
-                    # Buttons:
-                    # Button 0 (A): Toggle E-Stop
-                    if joystick.get_numbuttons() > 0 and joystick.get_button(0):
-                        e_stop = not e_stop
-                    # Button 2 (X): Water Brake (deploy all legs)
-                    brake = bool(joystick.get_button(2)) if joystick.get_numbuttons() > 2 else False
+                        # Right Stick: Drag Steering & Directional Leg deployment
+                        # rx: Right (+1.0) / Left (-1.0)
+                        # ry: Up (+1.0) / Down (-1.0)
+                        rx = raw_rx if abs(raw_rx) > deadband else 0.0
+                        ry = raw_ry if abs(raw_ry) > deadband else 0.0
 
-                    # Triggers or Shoulder buttons for Ballast intake/purge
-                    if joystick.get_numbuttons() > 5:
-                        intake_btn = joystick.get_button(5)  # RB: Intake water (dive)
-                        purge_btn = joystick.get_button(4)   # LB: Purge water (surface)
-                        if intake_btn and not purge_btn:
-                            ballast = min(1.0, ballast + 0.05)
-                        elif purge_btn and not intake_btn:
-                            ballast = max(-1.0, ballast - 0.05)
+                        steer_yaw = rx
+                        steer_pitch = ry
+
+                        # Buttons:
+                        # Button 0 (A): Toggle E-Stop (edge-triggered)
+                        curr_estop = bool(joystick.get_button(0)) if joystick.get_numbuttons() > 0 else False
+                        if curr_estop and not prev_estop_btn:
+                            e_stop = not e_stop
+                            print(f"[Controller] E-Stop toggled: {e_stop}")
+                        prev_estop_btn = curr_estop
+
+                        # Button 2 (X): Water Brake (deploy all legs)
+                        brake = bool(joystick.get_button(2)) if joystick.get_numbuttons() > 2 else False
+
+                        # Triggers or Shoulder buttons for Ballast intake/purge
+                        if joystick.get_numbuttons() > 5:
+                            intake_btn = joystick.get_button(5)  # RB: Intake water (dive)
+                            purge_btn = joystick.get_button(4)   # LB: Purge water (surface)
+                            if intake_btn and not purge_btn:
+                                ballast = min(1.0, ballast + 0.05)
+                            elif purge_btn and not intake_btn:
+                                ballast = max(-1.0, ballast - 0.05)
+                    except pygame.error as pe:
+                        print(f"[Controller] Gamepad communication error ({pe}). Falling back to simulated mode.")
+                        if joystick is not None:
+                            try:
+                                joystick.quit()
+                            except Exception:
+                                pass
+                        joystick = None
                 else:
                     # Simulated dynamic underwater cruising demonstration
                     t = time.time()
@@ -118,7 +161,9 @@ def main():
                     steer_pitch = 0.2 * np.cos(0.2 * t)
                     ballast = 0.3 * np.sin(0.15 * t)
                     brake = False
-                    raw_axes = [round(float(steer_yaw), 3), round(float(throttle), 3)]
+                    raw_axes = [0.0, round(float(throttle), 3), round(float(steer_yaw), 3), round(float(steer_pitch), 3)]
+                    rx = steer_yaw
+                    ry = steer_pitch
 
                 seq += 1
                 cmd_payload = {
@@ -128,6 +173,8 @@ def main():
                     "steer_yaw": round(float(steer_yaw), 3),
                     "steer_pitch": round(float(steer_pitch), 3),
                     "steer_roll": round(float(steer_roll), 3),
+                    "stick_right_x": round(float(rx), 3),
+                    "stick_right_y": round(float(ry), 3),
                     "ballast": round(float(ballast), 3),
                     "brake": bool(brake),
                     "e_stop": bool(e_stop),
@@ -144,6 +191,16 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
+        if joystick is not None:
+            try:
+                joystick.quit()
+            except Exception:
+                pass
+        try:
+            pygame.joystick.quit()
+            pygame.quit()
+        except Exception:
+            pass
         sys.exit(0)
 
 

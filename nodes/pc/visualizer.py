@@ -162,6 +162,8 @@ def main():
                         rr.log("control/throttle", rr_Scalar(float(cmd.get("throttle", cmd.get("vx", 0.0)))))
                         rr.log("control/steer_yaw", rr_Scalar(float(cmd.get("steer_yaw", cmd.get("vyaw", 0.0)))))
                         rr.log("control/steer_pitch", rr_Scalar(float(cmd.get("steer_pitch", cmd.get("pitch", 0.0)))))
+                        rr.log("control/stick_right_x", rr_Scalar(float(cmd.get("stick_right_x", cmd.get("steer_yaw", 0.0)))))
+                        rr.log("control/stick_right_y", rr_Scalar(float(cmd.get("stick_right_y", cmd.get("steer_pitch", 0.0)))))
                         rr.log("control/ballast_cmd", rr_Scalar(float(cmd.get("ballast", 0.0))))
                         rr.log("control/brake", rr_Scalar(1.0 if cmd.get("brake", False) else 0.0))
                         rr.log("control/e_stop", rr_Scalar(1.0 if cmd.get("e_stop", False) else 0.0))

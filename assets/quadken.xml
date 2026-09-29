@@ -274,8 +274,8 @@
   <actuator>
     <!-- ===== ESP1: THRUST & DRAG-STEERING UNIT ===== -->
     <!-- 2x Forward BLDC Thrusters (Tandem In-Line, Counter-Rotating) -->
-    <motor name="bldc_thruster_1" site="thrust_site_1" gear="1.0 0 0  0.02 0 0" ctrllimited="true" ctrlrange="0 30"/>
-    <motor name="bldc_thruster_2" site="thrust_site_2" gear="1.0 0 0 -0.02 0 0" ctrllimited="true" ctrlrange="0 30"/>
+    <motor name="bldc_thruster_1" site="thrust_site_1" gear="1.0 0 0  0.02 0 0" ctrllimited="true" ctrlrange="0 200"/>
+    <motor name="bldc_thruster_2" site="thrust_site_2" gear="1.0 0 0 -0.02 0 0" ctrllimited="true" ctrlrange="0 200"/>
 
     <!-- 4x Membrane Leg Deployment Servos (Direct 0 to 90 degrees!) -->
     <general name="leg_servo_top" joint="joint_leg_top" class="servo_actuator"/>

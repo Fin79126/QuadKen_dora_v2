@@ -48,6 +48,9 @@ class UnderwaterDynamics:
     def __init__(self):
         # Current ballast intake level (0.0: Empty/Positive Buoyancy, 1.0: Full/Negative Buoyancy)
         self.ballast_fill_ratio = 0.5  # Start at neutral buoyancy
+        # Leg deployment configuration
+        self.max_deploy_deg = 75.0     # Maximum opening angle (0 to 90 deg range)
+        self.spread_factor = 1.5       # Spread factor: 1.5 allows side legs to deploy at 50% for membrane opening
 
     def compute_actuators(
         self,
@@ -60,9 +63,11 @@ class UnderwaterDynamics:
         brake: bool,
         roll_deg: float,
         pitch_deg: float,
+        stick_right_x: float = None,
+        stick_right_y: float = None,
     ):
         # 1. Forward BLDC Propulsion
-        # Robot only moves forward. Clamp throttle to [0.0, 1.0].
+        # Left stick operates whole-body forward propulsion. Clamp throttle to [0.0, 1.0].
         fwd_thrust = max(0.0, min(1.0, throttle))
 
         if brake:
@@ -72,49 +77,62 @@ class UnderwaterDynamics:
             bldc_pwm = [pwm_val, pwm_val]
 
         # 2. Drag Steering (4 Membrane Legs: [0: Top, 1: Right, 2: Bottom, 3: Left])
-        # Opening a leg catches water flow, creating drag that turns the robot.
-        max_deploy_deg = 70.0
-
+        # Direct degree control (0 deg = closed/streamlined, max_deploy_deg = full deploy)
         if brake:
-            # Full umbrella deployment for hydrodynamic braking
-            leg_angles = [max_deploy_deg] * 4
+            # Full 4-leg umbrella deployment for hydrodynamic braking
+            leg_angles = [self.max_deploy_deg] * 4
         else:
-            # Base angle: slightly streamlined when moving forward
-            leg_top = 0.0
-            leg_right = 0.0
-            leg_bottom = 0.0
-            leg_left = 0.0
+            # Parse right-stick directional vector (X: Right/Left, Y: Up/Down)
+            sx = stick_right_x if stick_right_x is not None else steer_yaw
+            sy = stick_right_y if stick_right_y is not None else steer_pitch
 
-            # Yaw steering via differential drag (Right leg turns right, Left leg turns left)
-            if steer_yaw > 0.05:
-                # Turn Right -> Deploy Right leg (index 1)
-                leg_right += steer_yaw * max_deploy_deg
-            elif steer_yaw < -0.05:
-                # Turn Left -> Deploy Left leg (index 3)
-                leg_left += (-steer_yaw) * max_deploy_deg
+            stick_mag = min(1.0, math.hypot(sx, sy))
 
-            # Pitch steering via differential drag (Top leg dives down, Bottom leg pitches up)
-            if steer_pitch > 0.05:
-                # Pitch Up / Ascend -> Deploy Bottom leg (index 2)
-                leg_bottom += steer_pitch * max_deploy_deg
-            elif steer_pitch < -0.05:
-                # Pitch Down / Dive -> Deploy Top leg (index 0)
-                leg_top += (-steer_pitch) * max_deploy_deg
+            # Nominal leg orientation angles in robot rear-facing projection (u: Right, v: Top):
+            # Leg 0 (Top): pi/2 (+90 deg)
+            # Leg 1 (Right): 0.0 (0 deg)
+            # Leg 2 (Bottom): -pi/2 (-90 deg)
+            # Leg 3 (Left): pi (180 deg)
+            leg_nominals = [math.pi / 2.0, 0.0, -math.pi / 2.0, math.pi]
+            leg_deploys = [0.0, 0.0, 0.0, 0.0]
 
-            # IMU Posture Compensation (stabilize unwanted roll and pitch tilts)
-            # If robot is pitching down (pitch_deg < 0), slightly deploy bottom leg
-            pitch_compensation = float(np.clip(-pitch_deg * 0.5, -20.0, 20.0))
-            if pitch_compensation > 0:
-                leg_bottom += pitch_compensation
-            else:
-                leg_top += abs(pitch_compensation)
+            if stick_mag > 0.05:
+                # User stick direction angle (rad) in operator/world perspective
+                stick_angle = math.atan2(sy, sx)
 
-            # Clamp all leg angles to [0.0, max_deploy_deg]
+                # BNO Orientation Compensation (Head-up mode):
+                # When robot rolls by roll_deg, rotate stick angle into robot body frame so that
+                # pushing the stick UP always deploys whichever leg is physically on top in world gravity!
+                target_body_angle = stick_angle + math.radians(roll_deg)
+
+                # Fan / Membrane Spread deployment:
+                # Main leg deploys 100%. Side adjacent legs (at 90 deg) deploy at cos(90/1.5) = 50%
+                # to fan out the membrane skins between legs for maximum steering bite.
+                # Opposite legs (> 135 deg) remain fully closed.
+                for i in range(4):
+                    diff = math.atan2(
+                        math.sin(target_body_angle - leg_nominals[i]),
+                        math.cos(target_body_angle - leg_nominals[i]),
+                    )
+                    if abs(diff) < math.radians(135.0):
+                        w = math.cos(diff / self.spread_factor)
+                    else:
+                        w = 0.0
+                    leg_deploys[i] = stick_mag * w * self.max_deploy_deg
+
+            # IMU Posture Compensation (stabilize pitch tilt when stick is neutral or gentle)
+            if stick_mag < 0.3:
+                fade = 1.0 - (stick_mag / 0.3)
+                pitch_comp = float(np.clip(-pitch_deg * 0.4, -15.0, 15.0)) * fade
+                if pitch_comp > 0:
+                    leg_deploys[2] += pitch_comp  # Pitch down tilt -> deploy bottom leg
+                else:
+                    leg_deploys[0] += abs(pitch_comp)  # Pitch up tilt -> deploy top leg
+
+            # Clamp all leg angles to [0.0, self.max_deploy_deg]
             leg_angles = [
-                round(float(np.clip(leg_top, 0.0, max_deploy_deg)), 1),
-                round(float(np.clip(leg_right, 0.0, max_deploy_deg)), 1),
-                round(float(np.clip(leg_bottom, 0.0, max_deploy_deg)), 1),
-                round(float(np.clip(leg_left, 0.0, max_deploy_deg)), 1),
+                round(float(np.clip(leg_deploys[i], 0.0, self.max_deploy_deg)), 1)
+                for i in range(4)
             ]
 
         # 3. Head Water-Intake Ballast Servos (ESP2)
@@ -198,8 +216,12 @@ def main():
                 steer_yaw = control_cmd.get("steer_yaw", control_cmd.get("vyaw", 0.0))
                 steer_pitch = control_cmd.get("steer_pitch", control_cmd.get("pitch", 0.0))
                 steer_roll = control_cmd.get("steer_roll", 0.0)
+                stick_rx = control_cmd.get("stick_right_x", steer_yaw)
+                stick_ry = control_cmd.get("stick_right_y", steer_pitch)
                 ballast_cmd = control_cmd.get("ballast", 0.0)
                 brake = control_cmd.get("brake", False)
+
+                stick_mag = math.hypot(stick_rx, stick_ry)
 
                 if is_estop:
                     robot_state = "EMERGENCY_STOP"
@@ -208,12 +230,12 @@ def main():
                 elif brake:
                     robot_state = "HYDRO_BRAKING"
                 elif throttle > 0.05:
-                    if abs(steer_yaw) > 0.1:
-                        robot_state = "DRAG_TURNING"
-                    elif abs(steer_pitch) > 0.1:
-                        robot_state = "DRAG_PITCHING"
+                    if stick_mag > 0.1:
+                        robot_state = "DRAG_STEERING"
                     else:
                         robot_state = "CRUISING"
+                elif stick_mag > 0.1:
+                    robot_state = "DRAG_STEERING"
                 else:
                     robot_state = "IDLE_HOVER"
 
@@ -234,6 +256,8 @@ def main():
                         brake=brake,
                         roll_deg=float(bno_data.get("roll", 0.0)),
                         pitch_deg=float(bno_data.get("pitch", 0.0)),
+                        stick_right_x=stick_rx,
+                        stick_right_y=stick_ry,
                     )
 
                 seq += 1
