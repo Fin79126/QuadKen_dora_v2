@@ -77,6 +77,7 @@ class BalloonDetector:
         self.last_target = None
         self.last_detect_time = None
         self.strike_hold_frames = 0
+        self.last_pop_count = 0
 
     def detect(self, bgr_image: np.ndarray, bno_data=None):
         """
@@ -160,13 +161,25 @@ class BalloonDetector:
         dt = (now - self.last_detect_time) if self.last_detect_time is not None else 0.02
         self.last_detect_time = now
 
+        # Check for balloon destruction event from telemetry
+        just_popped = False
+        pop_count = self.last_pop_count
+        if bno_data is not None:
+            pop_count = int(bno_data.get("pop_count", self.last_pop_count))
+            just_popped = bool(bno_data.get("just_popped", False))
+            if pop_count > self.last_pop_count or just_popped:
+                self.last_pop_count = max(self.last_pop_count, pop_count)
+                # Target was popped! Reset strike hold immediately
+                self.last_target = None
+                self.strike_hold_frames = 0
+
         # Check STRIKE blind-zone hold (when approaching within 1.15m and camera enters balloon sphere)
         is_in_strike_range = (
             hasattr(self, "last_target") and self.last_target is not None and self.last_target.get("distance", 999.0) < 1.15
         )
 
         if not candidates:
-            if is_in_strike_range and getattr(self, "strike_hold_frames", 0) < 50:
+            if is_in_strike_range and getattr(self, "strike_hold_frames", 0) < 20:
                 self.strike_hold_frames = getattr(self, "strike_hold_frames", 0) + 1
                 hold_dist = max(0.20, self.last_target["distance"] - 0.7 * dt)
                 self.last_target["distance"] = hold_dist
@@ -186,26 +199,42 @@ class BalloonDetector:
                     "elevation_deg": round(float(self.last_target["elevation"]), 2),
                     "distance_m": round(float(hold_dist), 2),
                     "mode": "STRIKE_HOLD",
+                    "pop_count": pop_count,
+                    "just_popped": just_popped,
                 }, annotated_image
 
             self.last_target = None
             self.strike_hold_frames = 0
-            cv2.putText(
-                annotated_image,
-                "PERCEPTION: SEARCHING (No Target)",
-                (8, 20),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.38,
-                (0, 165, 255),
-                1,
-                cv2.LINE_AA,
-            )
+            if just_popped:
+                cv2.putText(
+                    annotated_image,
+                    f"PERCEPTION: TARGET POPPED! (Pops: {pop_count})",
+                    (8, 20),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.38,
+                    (0, 255, 100),
+                    1,
+                    cv2.LINE_AA,
+                )
+            else:
+                cv2.putText(
+                    annotated_image,
+                    "PERCEPTION: SEARCHING (No Target)",
+                    (8, 20),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.38,
+                    (0, 165, 255),
+                    1,
+                    cv2.LINE_AA,
+                )
             return {
                 "target_found": False,
                 "azimuth_deg": 0.0,
                 "elevation_deg": 0.0,
                 "distance_m": 0.0,
                 "mode": "SEARCHING",
+                "pop_count": pop_count,
+                "just_popped": just_popped,
             }, annotated_image
 
         # Candidate Association: Maintain lock-on continuity
@@ -333,6 +362,8 @@ class BalloonDetector:
             "elevation_deg": round(float(elevation_deg), 2),
             "distance_m": round(float(distance_m), 2),
             "mode": "LOCKED",
+            "pop_count": pop_count,
+            "just_popped": just_popped,
         }
 
         return relative_info, annotated_image

@@ -25,9 +25,9 @@ nodes:
     path: nodes/pc/ai_guidance.py
     inputs:
       tick: dora/timer/millis/20
-      # Step 3 Verification: Ground Truth input (switchable to balloon_detector/target_relative_info in Step 4)
+      # Step 4: Fully Autonomous Perception-in-the-Loop Guidance
       target_relative_info:
-        source: mujoco_sim/target_relative_info
+        source: balloon_detector/target_relative_info
         queue_size: 5
       bno_data:
         source: mujoco_sim/bno_data

@@ -588,6 +588,9 @@ class QuadKenMuJoCoSim:
 
         gyro_deg = [float(np.rad2deg(g)) for g in gyro]
         accel_data = [float(a) for a in accel]
+        sim_time = float(self.data.time)
+        last_s_pop = getattr(self, "last_sim_pop_time", -999.0)
+        just_popped = (sim_time - last_s_pop < 1.0)
 
         payload = {
             "seq": seq,
@@ -599,6 +602,8 @@ class QuadKenMuJoCoSim:
             "accel": [round(a, 2) for a in accel_data],
             "depth_m": round(float(depth_m), 2),
             "is_surfaced": bool(getattr(self, "is_surfaced", False)),
+            "pop_count": self.balloon_pop_count,
+            "just_popped": bool(just_popped),
         }
         return payload
 

@@ -58,12 +58,18 @@ class AIGuidanceController:
         self.prev_elevation_err = 0.0
         self.last_update_time = None
         self.current_mode = "SEARCH"
+        self.last_pop_time = -999.0
+        self.last_pop_count = 0
+        self.search_start_time = None
 
     def reset(self):
         self.prev_azimuth_err = 0.0
         self.prev_elevation_err = 0.0
         self.last_update_time = None
         self.current_mode = "SEARCH"
+        self.last_pop_time = -999.0
+        self.last_pop_count = 0
+        self.search_start_time = None
 
     def update(self, target_info: dict, bno_data: dict, current_time: float = None) -> tuple[dict, dict]:
         """
@@ -85,34 +91,55 @@ class AIGuidanceController:
         azimuth_deg = float(target_info.get("azimuth_deg", 0.0))
         elevation_deg = float(target_info.get("elevation_deg", 0.0))
         distance_m = float(target_info.get("distance_m", 99.0))
-        pop_count = int(target_info.get("pop_count", 0))
-        just_popped = bool(target_info.get("just_popped", False))
+        
+        # Pop telemetry from BNO or target_info
+        pop_count = int(bno_data.get("pop_count", target_info.get("pop_count", self.last_pop_count)))
+        just_popped = bool(bno_data.get("just_popped", target_info.get("just_popped", False)))
+
+        if pop_count > self.last_pop_count:
+            self.last_pop_count = pop_count
+            self.last_pop_time = current_time
+            self.prev_azimuth_err = 0.0
+            self.prev_elevation_err = 0.0
 
         depth_m = float(bno_data.get("depth_m", 1.5))
         is_surfaced = bool(bno_data.get("is_surfaced", False) or target_info.get("is_surfaced", False))
         gyro = bno_data.get("gyro", [0.0, 0.0, 0.0])  # [gx, gy, gz] in deg/s
+        roll_deg = float(bno_data.get("roll", 0.0))
+        pitch_deg = float(bno_data.get("pitch", 0.0))
 
         # -------------------------------------------------------------
         # 1. State Machine & Mode Selection
         # -------------------------------------------------------------
-        # Surface breach safety override: If surfaced or very close to surface, force dive
-        if is_surfaced or depth_m < 0.35:
+        time_since_pop = current_time - self.last_pop_time
+
+        # Surface breach recovery with hysteresis:
+        # Enter recovery when depth < 0.35m or surfaced.
+        # Stay in recovery until submerged deeper than 0.60m and not surfaced.
+        in_surface_recovery = (self.current_mode == "SURFACE_RECOVERY" and (depth_m < 0.60 or is_surfaced))
+        needs_surface_recovery = (is_surfaced or depth_m < 0.35)
+
+        if needs_surface_recovery or in_surface_recovery:
             self.current_mode = "SURFACE_RECOVERY"
+            self.search_start_time = None
+        elif time_since_pop < 1.2:
+            # Post-pop settling: briefly decelerate to avoid high-speed overshoot / wall ramming
+            self.current_mode = "POST_POP"
+            self.search_start_time = None
         elif not target_found:
             self.current_mode = "SEARCH"
+            if self.search_start_time is None:
+                self.search_start_time = current_time
         elif distance_m < 1.3:
             self.current_mode = "STRIKE"
+            self.search_start_time = None
         else:
             self.current_mode = "APPROACH"
+            self.search_start_time = None
 
         # -------------------------------------------------------------
         # BNO Roll Orientation Compensation (Head-Up Earth-Level Projection)
         # -------------------------------------------------------------
-        # Target azimuth & elevation from camera/body frame are projected onto the Earth-level horizon.
-        # This precisely matches the operator stick convention (Head-up mode) expected by compute.py,
-        # ensuring that pushing UP/RIGHT always deploys whichever leg is physically on TOP/RIGHT in world gravity!
-        roll_deg = float(bno_data.get("roll", 0.0))
-        pitch_deg = float(bno_data.get("pitch", 0.0))
         roll_rad = math.radians(roll_deg)
         pitch_rad = math.radians(pitch_deg)
         az_rad = math.radians(azimuth_deg)
@@ -131,7 +158,6 @@ class AIGuidanceController:
         elevation_level = math.degrees(math.atan2(z_level, math.hypot(xb, y_level)))
 
         # Project body gyro rates [gx, gy, gz] onto Earth vertical (gravity Z) axis for pure yaw damping:
-        # omega_z_world = -gx * sin(pitch) + gy * sin(roll)*cos(pitch) + gz * cos(roll)*cos(pitch)
         omega_z_world = (
             -gyro[0] * math.sin(pitch_rad)
             + gyro[1] * math.sin(roll_rad) * math.cos(pitch_rad)
@@ -143,20 +169,51 @@ class AIGuidanceController:
         # -------------------------------------------------------------
         if self.current_mode == "SURFACE_RECOVERY":
             # Force ballast full intake (sink) + downward pitch drag (nose down)
-            throttle = 0.40
+            throttle = 0.45
             steer_yaw = 0.0
-            steer_pitch = -0.70  # Top/Bottom leg differential for nose down
+            steer_pitch = -0.75  # Top/Bottom leg differential for nose down
             ballast = 1.0        # Max ballast intake to pull AUV underwater
             brake = False
 
+        elif self.current_mode == "POST_POP":
+            # Post-pop deceleration and trim stabilization
+            throttle = 0.15
+            steer_yaw = 0.40     # Begin sweep turn
+            target_depth = 1.8
+            depth_err = target_depth - depth_m
+            # Pitch restoration: nose-down (pitch_deg > 0) commands nose-up (steer_pitch > 0)
+            pitch_cmd = -0.40 * depth_err + 0.035 * pitch_deg
+            if depth_m > 2.6:
+                pitch_cmd = max(0.5, pitch_cmd)  # Hard pull-up near pool floor
+            steer_pitch = float(np.clip(pitch_cmd, -0.6, 0.6))
+            ballast = float(np.clip(0.40 * depth_err, -0.7, 0.7))
+            brake = False
+
         elif self.current_mode == "SEARCH":
-            # Slow cruise and turn to sweep pool
-            throttle = 0.35
-            steer_yaw = 0.60     # Gentle sweeping turn
-            # Maintain safe mid-water depth (around 1.8m)
-            depth_err = 1.8 - depth_m
-            steer_pitch = float(np.clip(depth_err * 0.5, -0.5, 0.5))
-            ballast = float(np.clip(-depth_err * 0.3, -0.5, 0.5))
+            # Autonomous Pool Sweep & Depth Hold
+            search_dur = (current_time - self.search_start_time) if self.search_start_time is not None else 0.0
+
+            # Alternate sweeping turn with wide cruise to explore entire pool
+            if (search_dur % 14.0) > 10.0:
+                throttle = 0.45
+                steer_yaw = 0.25  # Widen circle to translate across arena
+            else:
+                throttle = 0.38
+                steer_yaw = 0.55  # Standard sweep circle to scan 360 deg
+
+            # Depth PD hold at 1.8m
+            target_depth = 1.8
+            depth_err = target_depth - depth_m  # >0: too shallow, <0: too deep
+            # Pitch restoration: pitch_deg > 0 (nose down) -> steer_pitch > 0 (pull up)
+            pitch_cmd = -0.45 * depth_err + 0.035 * pitch_deg
+            if depth_m > 2.6:
+                pitch_cmd = max(0.5, pitch_cmd)  # Hard pull-up near pool floor
+            steer_pitch = float(np.clip(pitch_cmd, -0.6, 0.6))
+
+            ballast_cmd = 0.45 * depth_err
+            if depth_m > 2.6:
+                ballast_cmd = -0.8  # Strong purge near bottom
+            ballast = float(np.clip(ballast_cmd, -0.7, 0.7))
             brake = False
 
         else:
@@ -165,8 +222,6 @@ class AIGuidanceController:
             # (A) Horizontal Yaw Drag-Steering (Earth-level azimuth error)
             # ---------------------------------------------------------
             d_az = (azimuth_level - self.prev_azimuth_err) / dt
-            # PD control + Earth-level vertical gyro rate damping
-            # If target is to the right in Earth level (azimuth > 0), steer_yaw > 0
             yaw_cmd = self.kp_yaw * azimuth_level + self.kd_yaw * d_az + self.k_gyro_yaw * omega_z_world
             steer_yaw = float(np.clip(yaw_cmd, -1.0, 1.0))
             self.prev_azimuth_err = azimuth_level
@@ -175,19 +230,16 @@ class AIGuidanceController:
             # (B) Vertical Pitch Drag-Steering & Ballast (Earth-level elevation error)
             # ---------------------------------------------------------
             d_el = (elevation_level - self.prev_elevation_err) / dt
-            # If target is above in Earth level (elevation > 0), steer_pitch > 0
             pitch_cmd = self.kp_pitch * elevation_level + self.kd_pitch * d_el
             steer_pitch = float(np.clip(pitch_cmd, -1.0, 1.0))
             self.prev_elevation_err = elevation_level
 
             # Ballast intake control (Earth vertical buoyancy trim):
-            # When target is below in world: intake water (ballast > 0).
-            # When target is above in world: purge water (ballast < 0).
-            ballast_base = -0.02 * elevation_level
-            # Depth safety trim: keep within pool depth (1.0m to 2.8m)
-            if depth_m < 0.6:
+            ballast_base = -0.025 * elevation_level
+            # Depth safety trim: keep within pool depth (0.7m to 2.8m)
+            if depth_m < 0.7:
                 ballast_base += 0.4
-            elif depth_m > 3.0:
+            elif depth_m > 2.8:
                 ballast_base -= 0.4
             ballast = float(np.clip(ballast_base, -1.0, 1.0))
 
@@ -201,9 +253,9 @@ class AIGuidanceController:
             else:
                 # Approach mode: If azimuth error is large, reduce thrust slightly to allow tight turn,
                 # then accelerate once aligned.
-                if abs_az > 45.0:
-                    throttle = 0.55
-                elif abs_az > 20.0:
+                if abs_az > 35.0:
+                    throttle = 0.50
+                elif abs_az > 18.0:
                     throttle = 0.75
                 else:
                     throttle = 0.90
