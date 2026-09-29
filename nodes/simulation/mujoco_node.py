@@ -74,11 +74,20 @@ class QuadKenMuJoCoSim:
         self.target_legs = [0.0, 0.0, 0.0, 0.0]  # [Top, Right, Bottom, Left] in degrees
         self.target_ballast = [0.0, 0.0, 0.0, 0.0]
 
+        # Resolve AUV root body ID dynamically from XML model
+        self.auv_body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "auv")
+        if self.auv_body_id == -1:
+            raise ValueError("Body 'auv' not found in MuJoCo model!")
+
         # Hydrodynamics parameters
-        self.water_density = 1000.0  # kg/m^3
-        self.membrane_area_max = 0.035  # m^2 per membrane segment
-        self.drag_coeff = 1.2
-        self.lever_arm = 0.16  # distance from body centerline to membrane center (m)
+        self.water_density = 1000.0   # kg/m^3
+        self.membrane_area_max = 0.08 # m^2 per deployed membrane quadrant (realistic fan area)
+        self.drag_coeff = 1.2         # Longitudinal drag coefficient (Cd)
+        self.lift_coeff = 1.0         # Normal / lateral steering force coefficient (Cl)
+        self.x_com = 0.28             # Center of Mass X in body frame (m, from quadken.xml)
+        self.z_com = -0.02            # Center of Mass Z in body frame (m, from quadken.xml)
+        self.leg_length = 0.30        # Leg strut length (m)
+        self.hull_radius = 0.12       # Hull radius at aft hinge rim (m)
 
         # Timing
         self.last_render_time = 0.0
@@ -118,8 +127,7 @@ class QuadKenMuJoCoSim:
         for i in range(4):
             self.data.ctrl[6 + i] = max(0.0, min(90.0, self.target_ballast[i]))
 
-        # 4. Hydrodynamic Drag Steering Calculation
-        # Compute body-frame forward velocity u
+        # 4. Hydrodynamic Drag Steering & Turning Moments Calculation
         rot_mat = np.zeros(9, dtype=np.float64)
         mujoco.mju_quat2Mat(rot_mat, self.data.qpos[3:7])
         rot_mat = rot_mat.reshape((3, 3))
@@ -128,40 +136,60 @@ class QuadKenMuJoCoSim:
         body_lin_vel = rot_mat.T @ world_lin_vel
         u_forward = max(0.0, body_lin_vel[0])  # Robot forward speed (+X)
 
-        # Membrane drag forces when legs are open
-        # Legs: [0: Top, 1: Right, 2: Bottom, 3: Left]
-        top_deg = self.target_legs[0]
-        right_deg = self.target_legs[1]
-        bottom_deg = self.target_legs[2]
-        left_deg = self.target_legs[3]
+        total_body_force = np.zeros(3, dtype=np.float64)
+        total_body_torque = np.zeros(3, dtype=np.float64)
 
-        def calc_drag(angle_deg):
-            area = self.membrane_area_max * math.sin(math.radians(max(0.0, min(90.0, angle_deg))))
-            return 0.5 * self.water_density * (u_forward ** 2) * self.drag_coeff * area
+        if u_forward > 0.01:
+            q_dynamic = 0.5 * self.water_density * (u_forward ** 2)
 
-        d_top = calc_drag(top_deg)
-        d_right = calc_drag(right_deg)
-        d_bottom = calc_drag(bottom_deg)
-        d_left = calc_drag(left_deg)
+            # Legs: [0: Top, 1: Right, 2: Bottom, 3: Left]
+            for i in range(4):
+                angle_deg = max(0.0, min(90.0, self.target_legs[i]))
+                if angle_deg < 0.5:
+                    continue
 
-        # Hydrodynamic Moments in body frame:
-        # Yaw torque: Right leg drag creates +Z (turn right), Left creates -Z (turn left)
-        tau_yaw = (d_right - d_left) * self.lever_arm
-        # Pitch torque: Top leg drag creates +Y (pitch down / dive), Bottom creates -Y (pitch up / ascend)
-        tau_pitch = (d_top - d_bottom) * self.lever_arm
-        # Total braking drag along -X
-        total_drag = d_top + d_right + d_bottom + d_left
+                theta_rad = math.radians(angle_deg)
+                sin_th = math.sin(theta_rad)
+                cos_th = math.cos(theta_rad)
 
-        body_force = np.array([-total_drag, 0.0, 0.0])
-        body_torque = np.array([0.0, tau_pitch, tau_yaw])
+                # Projected area, longitudinal drag, and normal (rudder/lift) force
+                area = self.membrane_area_max * sin_th
+                f_drag = q_dynamic * self.drag_coeff * area
+                f_normal = q_dynamic * self.lift_coeff * area * cos_th
+
+                # Center of pressure of deployed membrane relative to CoM
+                x_cp = -0.5 * self.leg_length * cos_th
+                r_cp = self.hull_radius + 0.5 * self.leg_length * sin_th
+                delta_x = x_cp - self.x_com
+
+                # Leg 0: Top (+Z hinge, opens upward)
+                # Leg 1: Right (-Y hinge, opens rightward)
+                # Leg 2: Bottom (-Z hinge, opens downward)
+                # Leg 3: Left (+Y hinge, opens leftward)
+                if i == 0:  # Top
+                    r_vec = np.array([delta_x, 0.0, r_cp - self.z_com])
+                    f_vec = np.array([-f_drag, 0.0, -f_normal])  # Inward normal force (-Z)
+                elif i == 1:  # Right
+                    r_vec = np.array([delta_x, -r_cp, 0.0 - self.z_com])
+                    f_vec = np.array([-f_drag, +f_normal, 0.0])  # Inward normal force (+Y)
+                elif i == 2:  # Bottom
+                    r_vec = np.array([delta_x, 0.0, -r_cp - self.z_com])
+                    f_vec = np.array([-f_drag, 0.0, +f_normal])  # Inward normal force (+Z)
+                elif i == 3:  # Left
+                    r_vec = np.array([delta_x, +r_cp, 0.0 - self.z_com])
+                    f_vec = np.array([-f_drag, -f_normal, 0.0])  # Inward normal force (-Y)
+
+                torque_vec = np.cross(r_vec, f_vec)
+                total_body_force += f_vec
+                total_body_torque += torque_vec
 
         # Transform to world coordinates and apply to auv root body
-        world_force = rot_mat @ body_force
-        world_torque = rot_mat @ body_torque
+        world_force = rot_mat @ total_body_force
+        world_torque = rot_mat @ total_body_torque
 
-        # Apply external force & torque to root body (body id 1: auv)
-        self.data.xfrc_applied[1, 0:3] = world_force
-        self.data.xfrc_applied[1, 3:6] = world_torque
+        # Apply external force & torque to robot root body
+        self.data.xfrc_applied[self.auv_body_id, 0:3] = world_force
+        self.data.xfrc_applied[self.auv_body_id, 3:6] = world_torque
 
     def step(self):
         """Advance MuJoCo physics by one step."""
