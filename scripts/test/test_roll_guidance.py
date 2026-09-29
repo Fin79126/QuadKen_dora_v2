@@ -6,7 +6,7 @@ import os
 import sys
 import numpy as np
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from nodes.simulation.mujoco_node import QuadKenMuJoCoSim
 from nodes.pc.compute import UnderwaterDynamics
@@ -59,3 +59,5 @@ if __name__ == "__main__":
     test_roll_steering(30.0)
     test_roll_steering(60.0)
     test_roll_steering(-45.0)
+    test_roll_steering(180.0)
+

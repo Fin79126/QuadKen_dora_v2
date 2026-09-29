@@ -411,8 +411,8 @@ class QuadKenMuJoCoSim:
         # 6. Water Fluid Viscous Damping (Linear drag & selective angular damping)
         f_viscous_damping = -15.0 * world_lin_vel
         # Enhanced angular damping in water (pitch & yaw rotational drag + quadratic damping)
-        w_world = self.data.qvel[3:6]
-        w_body = rot_mat.T @ w_world
+        # In MuJoCo, freejoint qvel[3:6] is already in the body frame [p, q, r]
+        w_body = self.data.qvel[3:6]
         tau_damp_pitch = -7.0 * w_body[1] - 3.0 * w_body[1] * abs(w_body[1])
         tau_damp_yaw   = -7.0 * w_body[2] - 3.0 * w_body[2] * abs(w_body[2])
         tau_damp_roll  = -0.4 * w_body[0]
