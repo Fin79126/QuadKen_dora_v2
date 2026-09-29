@@ -1,7 +1,8 @@
 """
 PC Rerun Visualizer Node (QuadKen Underwater AUV)
 Subscribes to all robot dataflow streams and visualizes them in Rerun:
-  - camera/image: 2D underwater camera feed
+  - image: 2D underwater forward camera feed
+  - image_overhead: 2D third-person chase/overhead camera feed
   - bno_data: 3D body orientation and gyro/accel time-series
   - control_cmd: Command velocities, steering setpoints, ballast level
   - compute_status: AUV state, BLDC thrust, membrane leg deployment angles, ballast ratio
@@ -90,7 +91,7 @@ def main():
                 input_id = event["id"]
                 raw_value = event["value"]
 
-                # 1. Handle Camera Images (Underwater Feed)
+                # 1. Handle Camera Images (Underwater Feed & Overhead Chase Feed)
                 if input_id == "image":
                     try:
                         img_data = raw_value.to_pylist()[0]
@@ -105,6 +106,21 @@ def main():
                             rr.log("camera/feed", rr.Image(np_img))
                     except Exception as e:
                         print(f"[Visualizer] Camera log error: {e}")
+
+                elif input_id == "image_overhead":
+                    try:
+                        img_data = raw_value.to_pylist()[0]
+                        if isinstance(img_data, bytes):
+                            nparr = np.frombuffer(img_data, np.uint8)
+                            frame_bgr = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                            if frame_bgr is not None:
+                                frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+                                rr.log("camera/overhead", rr.Image(frame_rgb))
+                        elif hasattr(raw_value, "to_numpy"):
+                            np_img = raw_value.to_numpy()
+                            rr.log("camera/overhead", rr.Image(np_img))
+                    except Exception as e:
+                        print(f"[Visualizer] Overhead camera log error: {e}")
 
                 # 2. Handle BNO IMU Data (Underwater Orientation)
                 elif input_id == "bno_data":

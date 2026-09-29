@@ -133,9 +133,13 @@
       <site name="imu_site" pos="0.35 0 0" size="0.02" rgba="1 0 0 1"/>
       <site name="depth_sensor_site" pos="0.68 0 -0.08" size="0.01" rgba="0 1 1 1"/>
 
-      <!-- Forward Underwater Camera & Optics Lens -->
+      <!-- Underwater Cameras -->
       <geom name="camera_lens" type="sphere" pos="0.81 0 0" size="0.03" rgba="0.1 0.1 0.2 0.8" mass="0.01"/>
       <camera name="front_camera" pos="0.82 0 0" xyaxes="0 -1 0 0 0 1" fovy="75"/>
+      <!-- Third-person Overhead Chase Camera (View from aft-top looking down-forward at body & legs) -->
+      <camera name="overhead_camera" pos="-1.1 0 0.55" xyaxes="0 -1 0 0.382 0 0.924" fovy="65"/>
+      <!-- Direct Top-Down Bird's-Eye Camera -->
+      <camera name="topdown_camera" pos="0.35 0 1.6" xyaxes="0 -1 0 1 0 0" fovy="65"/>
 
       <!-- ========================================== -->
       <!-- 2. BLDC THRUSTERS (Dual Tandem, Inside 4 Legs) -->

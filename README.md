@@ -120,7 +120,8 @@ QuadKen_dora_v2/
 
 ### Rerun による可視化
 `nodes/pc/visualizer.py` が自動的に **Rerun Viewer** を起動し、以下の情報をリアルタイム描画します：
-* **Underwater Camera (2D)**: 前方水中カメラ映像
+* **Underwater Camera (2D)**: 前方水中カメラ映像（HUD付き）
+* **Overhead / Chase Camera (2D)**: 後方斜め上から機体全体・4本の膜展開・推進状態を見下ろす三人称俯瞰カメラ映像（HUD付き）
 * **Robot 3D Pose**: BNO センサーの姿勢クォータニオンによる機体の 3D トランスフォーム（水深・ロール・ピッチ・ヨー）
 * **IMU Plots**: Roll / Pitch / Yaw、角速度、加速度のタイムシリーズグラフ
 * **ESP Health (TCP)**: ESP1 / ESP2 の接続フラグ、通信レイテンシ(ms)、ステータステキスト
@@ -160,6 +161,7 @@ uv run dora run dataflow_mujoco.yml --uv
 
 * **仮想 BNO055**: MuJoCo 内の機体姿勢からリアルタイムにオイラー角(Roll/Pitch/Yaw)、角速度、水深を計算して `compute` と `visualizer` に配信。
 * **仮想 前方水中カメラ**: 円筒ノーズ先端のカメラからレンダリングした水中映像（ナビゲーションゲートやブイ、海底、HUDオーバーレイ付き）を Rerun へストリーミング。
+* **仮想 三人称俯瞰カメラ (Overhead / Chase)**: 機体後方斜め上から機体全体を追従撮影。推力や4脚（膜）の開閉状況・姿勢変化を客観的に俯瞰可能。
 * **膜展開 抵抗操舵**: コントローラー入力に応じて脚が開くと、前進水流から生じる抗力モーメント（ヨー・ピッチ）を物理エンジン上でリアルタイムに印加。
 
 ---

@@ -36,6 +36,9 @@ nodes:
       image:
         source: mujoco_sim/image
         queue_size: 5
+      image_overhead:
+        source: mujoco_sim/image_overhead
+        queue_size: 5
       bno_data:
         source: mujoco_sim/bno_data
         queue_size: 5
@@ -66,5 +69,6 @@ nodes:
     outputs:
       - bno_data
       - image
+      - image_overhead
       - esp_status
       - esp_telemetry

@@ -11,6 +11,7 @@ Integrates with dora-rs dataflow:
   Outputs:
     - bno_data: Virtual BNO055 orientation, gyro, accel, and depth (for compute & visualizer)
     - image: Virtual underwater forward camera feed with HUD (for visualizer)
+    - image_overhead: Virtual third-person chase/overhead camera feed with HUD (for visualizer)
     - esp_status: Simulated ESP1 & ESP2 TCP connection health (for compute & visualizer)
     - esp_telemetry: Simulated ESP telemetry like battery & depth (for compute & visualizer)
 """
@@ -241,6 +242,46 @@ class QuadKenMuJoCoSim:
             return encoded_jpg.tobytes()
         return None
 
+    def render_overhead_camera(self, bno_data):
+        """Render third-person overhead chase camera image and add HUD overlay."""
+        self.renderer.update_scene(self.data, camera="overhead_camera")
+        rgb_img = self.renderer.render()
+        bgr_img = cv2.cvtColor(rgb_img, cv2.COLOR_RGB2BGR)
+
+        h, w = bgr_img.shape[:2]
+
+        # Header HUD
+        cv2.putText(
+            bgr_img,
+            "MUJOCO CHASE / OVERHEAD CAM",
+            (8, 18),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.38,
+            (0, 255, 255),
+            1,
+            cv2.LINE_AA,
+        )
+
+        # Footer HUD: Forward Thrust and 4-Leg deploy angles
+        thrust_pct = int(self.target_bldc[0])
+        legs_str = f"THRUST:{thrust_pct}%  LEGS:[T:{int(self.target_legs[0])} R:{int(self.target_legs[1])} B:{int(self.target_legs[2])} L:{int(self.target_legs[3])}]"
+        cv2.putText(
+            bgr_img,
+            legs_str,
+            (8, h - 10),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.32,
+            (255, 200, 100),
+            1,
+            cv2.LINE_AA,
+        )
+
+        # Compress to JPEG bytes
+        success, encoded_jpg = cv2.imencode(".jpg", bgr_img, self.encode_param)
+        if success:
+            return encoded_jpg.tobytes()
+        return None
+
 
 def main():
     node = Node()
@@ -315,12 +356,17 @@ def main():
                         pa.array([json.dumps(esp_telemetry).encode("utf-8")]),
                     )
 
-                    # 3. Publish Virtual Camera Image (25 FPS)
+                    # 3. Publish Virtual Camera Images (25 FPS)
                     if now - last_camera_time >= camera_period:
                         last_camera_time = now
+                        # Front camera feed
                         jpeg_bytes = sim.render_front_camera(bno_payload)
                         if jpeg_bytes is not None:
                             node.send_output("image", pa.array([jpeg_bytes]))
+                        # Third-person overhead chase camera feed
+                        jpeg_bytes_overhead = sim.render_overhead_camera(bno_payload)
+                        if jpeg_bytes_overhead is not None:
+                            node.send_output("image_overhead", pa.array([jpeg_bytes_overhead]))
 
     except KeyboardInterrupt:
         pass
