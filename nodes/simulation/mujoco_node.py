@@ -27,6 +27,14 @@ import pyarrow as pa
 import mujoco
 from dora import Node
 
+# Ensure stdout and stderr use UTF-8 on Windows
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
 try:
     from config.robot_config import LEG_SERVO_MAX_SPEED_DPS
 except ImportError:

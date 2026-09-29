@@ -3,6 +3,10 @@ param(
     [switch]$StaticBalloons
 )
 
+# Force UTF-8 encoding for Python processes on Windows
+$env:PYTHONUTF8 = "1"
+$env:PYTHONIOENCODING = "utf-8"
+
 # Run QuadKen locally on Windows PC with MuJoCo Physics Simulation
 # Includes: Virtual BNO055, Virtual Underwater Camera, Drag Steering Kinematics, Rerun 3D Visualizer
 Write-Host "==================================================" -ForegroundColor Cyan

@@ -20,6 +20,14 @@ import numpy as np
 import pyarrow as pa
 from dora import Node
 
+# Ensure stdout and stderr use UTF-8 on Windows to avoid dora daemon UTF-8 warnings
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
 # Optional OpenTelemetry tracing
 try:
     from opentelemetry import trace
@@ -321,8 +329,8 @@ def main():
                         print(
                             f"[AI Guidance] Mode:{status['mode']:16s} "
                             f"Dist:{status['distance_m']:5.2f}m "
-                            f"Az:{status['azimuth_err_deg']:+6.1f}° "
-                            f"El:{status['elevation_err_deg']:+5.1f}° "
+                            f"Az:{status['azimuth_err_deg']:+6.1f}deg "
+                            f"El:{status['elevation_err_deg']:+5.1f}deg "
                             f"Thr:{status['throttle']:.2f} "
                             f"Yaw:{status['steer_yaw']:+5.2f} "
                             f"Pitch:{status['steer_pitch']:+5.2f} "

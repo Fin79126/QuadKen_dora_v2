@@ -88,8 +88,8 @@ def run_guidance_test(target_pops: int = 3, max_sim_seconds: float = 60.0):
         if step % 50 == 0:
             print(
                 f"[t={current_time:5.1f}s] Mode:{status['mode']:16s} "
-                f"Dist:{status['distance_m']:5.2f}m Az:{status['azimuth_err_deg']:+6.1f}° "
-                f"El:{status['elevation_err_deg']:+5.1f}° Thr:{status['throttle']:.2f} "
+                f"Dist:{status['distance_m']:5.2f}m Az:{status['azimuth_err_deg']:+6.1f}deg "
+                f"El:{status['elevation_err_deg']:+5.1f}deg Thr:{status['throttle']:.2f} "
                 f"Yaw:{status['steer_yaw']:+5.2f} Pitch:{status['steer_pitch']:+5.2f} "
                 f"Depth:{status['depth_m']:4.2f}m Legs:{[int(x) for x in leg_angles]}"
             )
