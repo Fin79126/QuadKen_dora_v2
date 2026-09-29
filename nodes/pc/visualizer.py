@@ -229,6 +229,31 @@ def main():
                         rr.log("compute/dt_ms", rr_Scalar(float(c_status.get("dt_ms", 0.0))))
                     except Exception as e:
                         print(f"[Visualizer] Compute status log error: {e}")
+
+                # 7. Handle Target Balloon Relative Telemetry
+                elif input_id == "target_relative_info":
+                    try:
+                        raw_bytes = raw_value.to_pylist()[0]
+                        target_info = json.loads(raw_bytes if isinstance(raw_bytes, str) else raw_bytes.decode("utf-8"))
+
+                        if target_info.get("target_found", False):
+                            dist = float(target_info.get("distance_m", 0.0))
+                            az = float(target_info.get("azimuth_deg", 0.0))
+                            el = float(target_info.get("elevation_deg", 0.0))
+                            pop_cnt = int(target_info.get("pop_count", 0))
+
+                            rr.log("balloon/distance_m", rr_Scalar(dist))
+                            rr.log("balloon/azimuth_deg", rr_Scalar(az))
+                            rr.log("balloon/elevation_deg", rr_Scalar(el))
+                            rr.log("balloon/popped_count", rr_Scalar(pop_cnt))
+
+                            pos_w = target_info.get("target_pos_world", [0, 0, 0])
+                            rr.log("world/balloon_target", rr.Points3D([pos_w], radii=0.20, colors=[[255, 30, 80]]))
+
+                            if target_info.get("just_popped", False):
+                                rr.log("status_text/balloon", rr.TextLog(f"*** BALLOON DESTROYED! Count: {pop_cnt} ***"))
+                    except Exception as e:
+                        print(f"[Visualizer] Target info log error: {e}")
     except KeyboardInterrupt:
         pass
     finally:

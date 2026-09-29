@@ -117,6 +117,27 @@ class QuadKenMuJoCoSim:
         self.chase_cam.distance = 1.6
         self.chase_cam.elevation = -26.0
 
+        # Target Balloon Setup (Mocap Body for collision & dynamic respawning)
+        self.balloon_body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "balloon")
+        self.balloon_geom_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, "balloon_geom")
+        if self.balloon_body_id != -1 and self.model.body_mocapid[self.balloon_body_id] != -1:
+            self.balloon_mocap_id = int(self.model.body_mocapid[self.balloon_body_id])
+        else:
+            self.balloon_mocap_id = 0 if self.model.nmocap > 0 else -1
+
+        self.balloon_pop_count = 0
+        self.last_pop_time = 0.0
+
+        # Submerged target waypoints for balloon respawning (X: 3.5..6.5m, Y: -0.8..0.8m, Z: -1.7..-1.3m)
+        self.balloon_waypoints = [
+            [4.2, 0.3, -1.5],
+            [5.5, -0.5, -1.3],
+            [3.8, -0.4, -1.7],
+            [6.2, 0.5, -1.5],
+            [4.8, 0.7, -1.2],
+        ]
+        self.current_waypoint_idx = 0
+
     def set_actuator_commands(self, cmd_dict):
         """Parse actuator_cmd from pc/compute.py."""
         esp1 = cmd_dict.get("esp1", {})
@@ -273,10 +294,95 @@ class QuadKenMuJoCoSim:
         self.data.xfrc_applied[self.auv_body_id, 0:3] = world_force
         self.data.xfrc_applied[self.auv_body_id, 3:6] = world_torque
 
+    def check_balloon_collision(self):
+        """Check for collision or close proximity between QuadKen nose and balloon."""
+        if self.balloon_mocap_id == -1:
+            return
+
+        now = time.time()
+        if now - self.last_pop_time < 1.0:
+            return
+
+        rot_mat = np.zeros(9, dtype=np.float64)
+        mujoco.mju_quat2Mat(rot_mat, self.data.qpos[3:7])
+        rot_mat = rot_mat.reshape((3, 3))
+        p_robot = self.data.qpos[0:3]
+        p_nose = p_robot + rot_mat @ np.array([0.72, 0.0, 0.0])
+
+        balloon_pos = self.data.mocap_pos[self.balloon_mocap_id]
+        dist_to_nose = float(np.linalg.norm(balloon_pos - p_nose))
+
+        # Check contact list in MuJoCo
+        contact_detected = False
+        if self.balloon_geom_id != -1:
+            for c_idx in range(self.data.ncon):
+                contact = self.data.contact[c_idx]
+                if contact.geom1 == self.balloon_geom_id or contact.geom2 == self.balloon_geom_id:
+                    contact_detected = True
+                    break
+
+        # Strike threshold: nose collision or within 0.35m of balloon center
+        if contact_detected or dist_to_nose < 0.35:
+            self.balloon_pop_count += 1
+            self.last_pop_time = now
+            print(f"\n[MuJoCo Node] *******************************************")
+            print(f"[MuJoCo Node] *** BALLOON POPPED! Total Count: {self.balloon_pop_count} ***")
+            print(f"[MuJoCo Node] *******************************************\n")
+
+            # Advance to next waypoint
+            self.current_waypoint_idx = (self.current_waypoint_idx + 1) % len(self.balloon_waypoints)
+            next_pos = self.balloon_waypoints[self.current_waypoint_idx]
+            self.data.mocap_pos[self.balloon_mocap_id] = next_pos
+            mujoco.mj_forward(self.model, self.data)
+
     def step(self):
         """Advance MuJoCo physics by one step."""
         self.apply_control_and_hydrodynamics()
         mujoco.mj_step(self.model, self.data)
+        self.check_balloon_collision()
+
+    def get_target_relative_info(self):
+        """Compute relative azimuth, elevation, and distance to balloon from AUV nose."""
+        if self.balloon_mocap_id == -1:
+            return {
+                "target_found": False,
+                "azimuth_deg": 0.0,
+                "elevation_deg": 0.0,
+                "distance_m": 0.0,
+                "target_pos_world": [0.0, 0.0, 0.0],
+                "pop_count": self.balloon_pop_count,
+                "just_popped": False,
+            }
+
+        rot_mat = np.zeros(9, dtype=np.float64)
+        mujoco.mju_quat2Mat(rot_mat, self.data.qpos[3:7])
+        rot_mat = rot_mat.reshape((3, 3))
+        p_robot = self.data.qpos[0:3]
+        p_nose = p_robot + rot_mat @ np.array([0.72, 0.0, 0.0])
+
+        balloon_pos = self.data.mocap_pos[self.balloon_mocap_id]
+        v_world = balloon_pos - p_nose
+        v_body = rot_mat.T @ v_world
+
+        xb, yb, zb = v_body
+        dist = float(np.linalg.norm(v_body))
+        # Robot convention: Forward is +X, Left is +Y, Up is +Z
+        # Azimuth: Left is negative, Right is positive (-yb)
+        azimuth_deg = math.degrees(math.atan2(-yb, max(1e-4, xb))) if xb > 0 else math.degrees(math.atan2(-yb, xb))
+        # Elevation: Down is negative, Up is positive (+zb)
+        elevation_deg = math.degrees(math.atan2(zb, math.hypot(xb, yb)))
+
+        just_popped = (time.time() - self.last_pop_time < 1.5)
+
+        return {
+            "target_found": True,
+            "azimuth_deg": round(float(azimuth_deg), 2),
+            "elevation_deg": round(float(elevation_deg), 2),
+            "distance_m": round(float(dist), 2),
+            "target_pos_world": [round(float(p), 2) for p in balloon_pos],
+            "pop_count": self.balloon_pop_count,
+            "just_popped": just_popped,
+        }
 
     def get_bno_payload(self, seq):
         """Extract virtual BNO055 telemetry."""
@@ -304,7 +410,7 @@ class QuadKenMuJoCoSim:
         }
         return payload
 
-    def render_front_camera(self, bno_data):
+    def render_front_camera(self, bno_data, target_info=None):
         """Render front camera image and add HUD overlay."""
         self.renderer.update_scene(self.data, camera="front_camera")
         rgb_img = self.renderer.render()
@@ -319,7 +425,7 @@ class QuadKenMuJoCoSim:
         cv2.line(bgr_img, (cx, cy - 14), (cx, cy + 14), (0, 240, 240), 1)
         cv2.circle(bgr_img, (cx, cy), 8, (0, 240, 240), 1)
 
-        # 2. Header HUD: Mode & Depth
+        # 2. Header HUD: Mode & Target Info
         cv2.putText(
             bgr_img,
             "MUJOCO VIRTUAL CAM",
@@ -330,6 +436,36 @@ class QuadKenMuJoCoSim:
             1,
             cv2.LINE_AA,
         )
+
+        if target_info and target_info.get("target_found", False):
+            dist = target_info.get("distance_m", 0.0)
+            az = target_info.get("azimuth_deg", 0.0)
+            el = target_info.get("elevation_deg", 0.0)
+            pop = target_info.get("pop_count", 0)
+            hud_target = f"BALLOON:{dist:4.1f}m [Az:{az:+4.1f} El:{el:+4.1f}] POP:{pop}"
+            cv2.putText(
+                bgr_img,
+                hud_target,
+                (8, 34),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.33,
+                (100, 220, 255),
+                1,
+                cv2.LINE_AA,
+            )
+
+            if target_info.get("just_popped"):
+                cv2.rectangle(bgr_img, (cx - 90, cy - 16), (cx + 90, cy + 16), (0, 200, 50), -1)
+                cv2.putText(
+                    bgr_img,
+                    "TARGET DESTROYED!",
+                    (cx - 80, cy + 5),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.45,
+                    (255, 255, 255),
+                    1,
+                    cv2.LINE_AA,
+                )
 
         depth = bno_data.get("depth_m", 1.5)
         pitch = bno_data.get("pitch", 0.0)
@@ -352,7 +488,7 @@ class QuadKenMuJoCoSim:
             return encoded_jpg.tobytes()
         return None
 
-    def render_overhead_camera(self, bno_data):
+    def render_overhead_camera(self, bno_data, target_info=None):
         """Render third-person chase camera with level horizon (roll-free view)."""
         yaw_deg = float(bno_data.get("yaw", 0.0))
         # Look at the center of the AUV body
@@ -380,6 +516,31 @@ class QuadKenMuJoCoSim:
             1,
             cv2.LINE_AA,
         )
+
+        if target_info and target_info.get("target_found", False):
+            dist = target_info.get("distance_m", 0.0)
+            pop = target_info.get("pop_count", 0)
+            cv2.putText(
+                bgr_img,
+                f"TARGET BALLOON: {dist:4.1f}m | DESTROYED: {pop}",
+                (8, 34),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.33,
+                (100, 220, 255),
+                1,
+                cv2.LINE_AA,
+            )
+            if target_info.get("just_popped"):
+                cv2.putText(
+                    bgr_img,
+                    "*** TARGET DESTROYED! ***",
+                    (w // 2 - 80, 50),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.45,
+                    (0, 255, 100),
+                    1,
+                    cv2.LINE_AA,
+                )
 
         # Footer HUD: Forward Thrust, Ballast intake %, and 4-Leg deploy angles
         thrust_pct = int(self.target_bldc[0])
@@ -476,15 +637,22 @@ def main():
                         pa.array([json.dumps(esp_telemetry).encode("utf-8")]),
                     )
 
-                    # 3. Publish Virtual Camera Images (25 FPS)
+                    # 3. Publish Target Balloon Relative Info (Ground Truth for Step 2)
+                    target_info = sim.get_target_relative_info()
+                    node.send_output(
+                        "target_relative_info",
+                        pa.array([json.dumps(target_info).encode("utf-8")]),
+                    )
+
+                    # 4. Publish Virtual Camera Images (25 FPS)
                     if now - last_camera_time >= camera_period:
                         last_camera_time = now
                         # Front camera feed
-                        jpeg_bytes = sim.render_front_camera(bno_payload)
+                        jpeg_bytes = sim.render_front_camera(bno_payload, target_info)
                         if jpeg_bytes is not None:
                             node.send_output("image", pa.array([jpeg_bytes]))
                         # Third-person overhead chase camera feed
-                        jpeg_bytes_overhead = sim.render_overhead_camera(bno_payload)
+                        jpeg_bytes_overhead = sim.render_overhead_camera(bno_payload, target_info)
                         if jpeg_bytes_overhead is not None:
                             node.send_output("image_overhead", pa.array([jpeg_bytes_overhead]))
 

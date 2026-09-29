@@ -54,6 +54,9 @@ nodes:
       esp_telemetry:
         source: mujoco_sim/esp_telemetry
         queue_size: 5
+      target_relative_info:
+        source: mujoco_sim/target_relative_info
+        queue_size: 5
 
   # ============================================================
   # MUJOCO DIGITAL TWIN SIMULATION NODE
@@ -72,3 +75,4 @@ nodes:
       - image_overhead
       - esp_status
       - esp_telemetry
+      - target_relative_info
