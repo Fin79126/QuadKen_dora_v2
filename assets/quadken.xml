@@ -28,13 +28,14 @@
     <geom condim="3" friction="0.8 0.1 0.1"/>
     <!-- Default for Leg joints: Opens 0 to 90 deg from inner to outer -->
     <default class="leg_joint">
-      <joint type="hinge" limited="true" range="0 90" damping="1.5" stiffness="0.1"/>
+      <joint type="hinge" limited="true" range="0 90" damping="0.6" stiffness="0.1"/>
     </default>
     <!-- Default for Servo Actuators: Direct 0 to 90 Degree control -->
     <!-- Gain 0.5 N*m/deg, bias scales rad to deg seamlessly -->
+    <!-- Realistic high-torque underwater servo: 8.0 N*m max torque for swift, responsive deployment -->
     <default class="servo_actuator">
       <general dyntype="none" biastype="affine" gainprm="0.5 0 0" biasprm="0 -28.64789 -0.05"
-               ctrlrange="0 90" forcelimited="true" forcerange="-25 25"/>
+               ctrlrange="0 90" forcelimited="true" forcerange="-8.0 8.0"/>
     </default>
   </default>
 
@@ -107,8 +108,9 @@
         Center of Gravity (CoG): Positioned towards aft on centerline (X=0.26, Y=0, Z=0.0)
         Center of Buoyancy (CoB): Positioned forward on centerline (X=0.48, Y=0, Z=0.0)
         -> Longitudinal offset (not vertical) naturally produces nose-up pitch trim when empty!
+        Hydrodynamic Added Inertia: Water surrounding cylindrical hull roughly doubles pitch/yaw virtual inertia.
       -->
-      <inertial pos="0.26 0 0" mass="6.8" diaginertia="0.12 0.32 0.32"/>
+      <inertial pos="0.26 0 0" mass="6.8" diaginertia="0.18 0.75 0.75"/>
 
       <!-- ========================================== -->
       <!-- 1. MAIN CYLINDRICAL BODY (Diameter 24cm, Length 70cm) -->

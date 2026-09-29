@@ -27,6 +27,11 @@ import pyarrow as pa
 import mujoco
 from dora import Node
 
+try:
+    from config.robot_config import LEG_SERVO_MAX_SPEED_DPS
+except ImportError:
+    LEG_SERVO_MAX_SPEED_DPS = 500.0
+
 MODEL_PATH = "assets/quadken.xml"
 
 
@@ -82,13 +87,24 @@ class QuadKenMuJoCoSim:
 
         # Hydrodynamics parameters
         self.water_density = 1000.0   # kg/m^3
-        self.membrane_area_max = 0.08 # m^2 per deployed membrane quadrant (realistic fan area)
-        self.drag_coeff = 1.2         # Longitudinal drag coefficient (Cd)
-        self.lift_coeff = 1.0         # Normal / lateral steering force coefficient (Cl)
+        self.membrane_area_max = 0.08 # m^2 per deployed membrane quadrant (kept as requested)
+        self.drag_coeff = 0.6         # Longitudinal drag coefficient (Cd, moderate flexible membrane)
+        self.lift_coeff = 0.35        # Normal / lateral steering force coefficient (Cl, moderate flexible membrane)
         self.x_com = 0.26             # Center of Mass X in body frame (m, from quadken.xml)
         self.z_com = 0.0              # Center of Mass Z in body frame (aligned on centerline)
         self.leg_length = 0.30        # Leg strut length (m)
         self.hull_radius = 0.12       # Hull radius at aft hinge rim (m)
+
+        # Servo physical rate limiter (realistic high-speed underwater servo: 500 deg/s)
+        self.current_leg_ctrl = [0.0, 0.0, 0.0, 0.0]
+        self.max_leg_servo_speed = LEG_SERVO_MAX_SPEED_DPS  # deg/s (~0.12s per 60 deg)
+
+        # Joint indices for physical leg hinge joints
+        self.leg_joint_names = ["joint_leg_top", "joint_leg_right", "joint_leg_bottom", "joint_leg_left"]
+        self.leg_qpos_indices = [
+            self.model.jnt_qposadr[mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, name)]
+            for name in self.leg_joint_names
+        ]
 
         # Timing
         self.last_render_time = 0.0
@@ -126,9 +142,17 @@ class QuadKenMuJoCoSim:
         self.data.ctrl[0] = thrust_1
         self.data.ctrl[1] = thrust_2
 
-        # 2. Apply Leg deployment servos (Actuators 2..5, degrees [0..90])
+        # 2. Apply Leg deployment servos with physical rate limiting (Actuators 2..5, degrees [0..90])
+        dt = float(self.model.opt.timestep)
+        max_delta = self.max_leg_servo_speed * dt
         for i in range(4):
-            self.data.ctrl[2 + i] = max(0.0, min(90.0, self.target_legs[i]))
+            target = max(0.0, min(90.0, self.target_legs[i]))
+            delta = target - self.current_leg_ctrl[i]
+            if abs(delta) > max_delta:
+                self.current_leg_ctrl[i] += math.copysign(max_delta, delta)
+            else:
+                self.current_leg_ctrl[i] = target
+            self.data.ctrl[2 + i] = self.current_leg_ctrl[i]
 
         # 3. Apply Ballast servos (Actuators 6..9, degrees [0..90])
         for i in range(4):
@@ -150,12 +174,15 @@ class QuadKenMuJoCoSim:
             q_dynamic = 0.5 * self.water_density * (u_forward ** 2)
 
             # Legs: [0: Top, 1: Right, 2: Bottom, 3: Left]
+            # Uses ACTUAL physical joint angle (qpos) instead of target command for realistic transient response!
             for i in range(4):
-                angle_deg = max(0.0, min(90.0, self.target_legs[i]))
+                qpos_idx = self.leg_qpos_indices[i]
+                theta_rad = float(self.data.qpos[qpos_idx])
+                theta_rad = max(0.0, min(math.pi / 2.0, theta_rad))
+                angle_deg = math.degrees(theta_rad)
                 if angle_deg < 0.5:
                     continue
 
-                theta_rad = math.radians(angle_deg)
                 sin_th = math.sin(theta_rad)
                 cos_th = math.cos(theta_rad)
 
@@ -230,10 +257,13 @@ class QuadKenMuJoCoSim:
 
         # 6. Water Fluid Viscous Damping (Linear drag & selective angular damping)
         f_viscous_damping = -15.0 * world_lin_vel
-        # Damp pitch and yaw rotations, but minimal damping on roll axis to allow free roll
+        # Enhanced angular damping in water (pitch & yaw rotational drag + quadratic damping)
         w_world = self.data.qvel[3:6]
         w_body = rot_mat.T @ w_world
-        tau_damp_body = np.array([-0.1 * w_body[0], -2.5 * w_body[1], -2.5 * w_body[2]])
+        tau_damp_pitch = -7.0 * w_body[1] - 3.0 * w_body[1] * abs(w_body[1])
+        tau_damp_yaw   = -7.0 * w_body[2] - 3.0 * w_body[2] * abs(w_body[2])
+        tau_damp_roll  = -0.4 * w_body[0]
+        tau_damp_body = np.array([tau_damp_roll, tau_damp_pitch, tau_damp_yaw])
         tau_viscous_damping = rot_mat @ tau_damp_body
 
         world_force += f_viscous_damping

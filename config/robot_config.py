@@ -47,6 +47,9 @@ CONTROL_LOOP_HZ = 50          # 50 Hz control loop (20ms interval)
 HEARTBEAT_INTERVAL_SEC = 0.5  # TCP ping-pong every 500ms
 FAILSAFE_TIMEOUT_SEC = 1.0    # Trigger failsafe if no packet for 1.0s
 
+# Actuator Dynamics & Speed Limits
+LEG_SERVO_MAX_SPEED_DPS = 500.0  # Max servo opening/closing speed (deg/s, ~0.12s per 60 deg)
+
 
 # Telemetry and Command Helpers
 def serialize_json(data: Any) -> bytes:

@@ -40,8 +40,8 @@ def apply_membrane_hydrodynamics(model, data, auv_body_id):
 
     water_density = 1000.0
     membrane_area_max = 0.08
-    drag_coeff = 1.2
-    lift_coeff = 1.0
+    drag_coeff = 0.6
+    lift_coeff = 0.35
     x_com = 0.26
     z_com = 0.0
     leg_length = 0.30
@@ -50,16 +50,21 @@ def apply_membrane_hydrodynamics(model, data, auv_body_id):
     total_force = np.zeros(3)
     total_torque = np.zeros(3)
 
+    leg_joint_names = ["joint_leg_top", "joint_leg_right", "joint_leg_bottom", "joint_leg_left"]
+
     if u_forward > 0.01:
         q_dynamic = 0.5 * water_density * (u_forward ** 2)
 
-        # Actuators 2..5 correspond to legs [Top, Right, Bottom, Left]
+        # Uses ACTUAL physical joint angle (qpos) instead of target command for realistic response
         for i in range(4):
-            angle_deg = max(0.0, min(90.0, data.ctrl[2 + i]))
+            jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, leg_joint_names[i])
+            qpos_idx = model.jnt_qposadr[jid]
+            theta_rad = float(data.qpos[qpos_idx])
+            theta_rad = max(0.0, min(math.pi / 2.0, theta_rad))
+            angle_deg = math.degrees(theta_rad)
             if angle_deg < 0.5:
                 continue
 
-            theta_rad = math.radians(angle_deg)
             sin_th = math.sin(theta_rad)
             cos_th = math.cos(theta_rad)
 
@@ -113,11 +118,14 @@ def apply_membrane_hydrodynamics(model, data, auv_body_id):
         world_force += f_ballast_world
         world_torque += tau_ballast
 
-    # Viscous fluid damping (pitch/yaw damped, minimal roll damping)
+    # Enhanced angular damping in water (pitch & yaw rotational drag + quadratic damping)
     world_force += -15.0 * world_lin_vel
     w_world = data.qvel[3:6]
     w_body = rot_mat.T @ w_world
-    tau_damp_body = np.array([-0.1 * w_body[0], -2.5 * w_body[1], -2.5 * w_body[2]])
+    tau_damp_pitch = -7.0 * w_body[1] - 3.0 * w_body[1] * abs(w_body[1])
+    tau_damp_yaw   = -7.0 * w_body[2] - 3.0 * w_body[2] * abs(w_body[2])
+    tau_damp_roll  = -0.4 * w_body[0]
+    tau_damp_body = np.array([tau_damp_roll, tau_damp_pitch, tau_damp_yaw])
     world_torque += rot_mat @ tau_damp_body
 
     data.xfrc_applied[auv_body_id, 0:3] = world_force
