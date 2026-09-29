@@ -104,7 +104,9 @@ class AIGuidanceController:
         # This precisely matches the operator stick convention (Head-up mode) expected by compute.py,
         # ensuring that pushing UP/RIGHT always deploys whichever leg is physically on TOP/RIGHT in world gravity!
         roll_deg = float(bno_data.get("roll", 0.0))
+        pitch_deg = float(bno_data.get("pitch", 0.0))
         roll_rad = math.radians(roll_deg)
+        pitch_rad = math.radians(pitch_deg)
         az_rad = math.radians(azimuth_deg)
         el_rad = math.radians(elevation_deg)
 
@@ -119,6 +121,14 @@ class AIGuidanceController:
 
         azimuth_level = math.degrees(math.atan2(-y_level, max(1e-4, xb)))
         elevation_level = math.degrees(math.atan2(z_level, math.hypot(xb, y_level)))
+
+        # Project body gyro rates [gx, gy, gz] onto Earth vertical (gravity Z) axis for pure yaw damping:
+        # omega_z_world = -gx * sin(pitch) + gy * sin(roll)*cos(pitch) + gz * cos(roll)*cos(pitch)
+        omega_z_world = (
+            -gyro[0] * math.sin(pitch_rad)
+            + gyro[1] * math.sin(roll_rad) * math.cos(pitch_rad)
+            + gyro[2] * math.cos(roll_rad) * math.cos(pitch_rad)
+        )
 
         # -------------------------------------------------------------
         # 2. Guidance Calculations per Mode
@@ -147,9 +157,9 @@ class AIGuidanceController:
             # (A) Horizontal Yaw Drag-Steering (Earth-level azimuth error)
             # ---------------------------------------------------------
             d_az = (azimuth_level - self.prev_azimuth_err) / dt
-            # PD control + gyro rate damping
+            # PD control + Earth-level vertical gyro rate damping
             # If target is to the right in Earth level (azimuth > 0), steer_yaw > 0
-            yaw_cmd = self.kp_yaw * azimuth_level + self.kd_yaw * d_az + self.k_gyro_yaw * gyro[2]
+            yaw_cmd = self.kp_yaw * azimuth_level + self.kd_yaw * d_az + self.k_gyro_yaw * omega_z_world
             steer_yaw = float(np.clip(yaw_cmd, -1.0, 1.0))
             self.prev_azimuth_err = azimuth_level
 
@@ -218,6 +228,8 @@ class AIGuidanceController:
             "azimuth_body_deg": round(azimuth_deg, 2),
             "elevation_body_deg": round(elevation_deg, 2),
             "roll_deg": round(roll_deg, 2),
+            "pitch_deg": round(pitch_deg, 2),
+            "omega_z_world": round(omega_z_world, 2),
             "distance_m": round(distance_m, 2),
             "pop_count": pop_count,
             "just_popped": just_popped,
