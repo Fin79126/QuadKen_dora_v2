@@ -137,13 +137,54 @@ def main():
                         brake = bool(joystick.get_button(2)) if joystick.get_numbuttons() > 2 else False
 
                         # Triggers or Shoulder buttons for Ballast intake/purge
-                        if joystick.get_numbuttons() > 5:
-                            intake_btn = joystick.get_button(5)  # RB: Intake water (dive)
-                            purge_btn = joystick.get_button(4)   # LB: Purge water (surface)
-                            if intake_btn and not purge_btn:
-                                ballast = min(1.0, ballast + 0.05)
-                            elif purge_btn and not intake_btn:
-                                ballast = max(-1.0, ballast - 0.05)
+                        # Compatible with Switch Pro Controller (R=10, ZR=17, L=9, ZL=16, D-pad),
+                        # and Xbox/Standard controllers (RB=5, LB=4, D-pad Hat, Analog Triggers).
+                        num_buttons = joystick.get_numbuttons()
+                        num_axes = joystick.get_numaxes()
+
+                        intake_pressed = False
+                        purge_pressed = False
+
+                        # 1. Check Shoulder / Trigger buttons
+                        # R / ZR / RB
+                        for btn_idx in [10, 17, 5]:
+                            if btn_idx < num_buttons and joystick.get_button(btn_idx):
+                                intake_pressed = True
+                                break
+
+                        # L / ZL / LB
+                        for btn_idx in [9, 16, 4]:
+                            if btn_idx < num_buttons and joystick.get_button(btn_idx):
+                                purge_pressed = True
+                                break
+
+                        # 2. Check D-pad buttons / Hats (Up: surface, Down: dive)
+                        if not intake_pressed and num_buttons > 12 and joystick.get_button(12):  # D-pad Down
+                            intake_pressed = True
+                        if not purge_pressed and num_buttons > 11 and joystick.get_button(11):  # D-pad Up
+                            purge_pressed = True
+
+                        if joystick.get_numhats() > 0:
+                            _, hat_y = joystick.get_hat(0)
+                            if hat_y < 0:
+                                intake_pressed = True
+                            elif hat_y > 0:
+                                purge_pressed = True
+
+                        # 3. Check Analog Triggers (LT/RT) if present
+                        if not intake_pressed and num_axes > 5 and joystick.get_axis(5) > 0.4:
+                            intake_pressed = True
+                        if not purge_pressed and num_axes > 4 and joystick.get_axis(4) > 0.4:
+                            purge_pressed = True
+
+                        # Velocity command for ballast fill ratio:
+                        # +1.0: filling water (diving), -1.0: purging water (surfacing), 0.0: hold
+                        if intake_pressed and not purge_pressed:
+                            ballast = 1.0
+                        elif purge_pressed and not intake_pressed:
+                            ballast = -1.0
+                        else:
+                            ballast = 0.0
                     except pygame.error as pe:
                         print(f"[Controller] Gamepad communication error ({pe}). Falling back to simulated mode.")
                         if joystick is not None:

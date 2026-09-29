@@ -47,7 +47,8 @@ class UnderwaterDynamics:
 
     def __init__(self):
         # Current ballast intake level (0.0: Empty/Positive Buoyancy, 1.0: Full/Negative Buoyancy)
-        self.ballast_fill_ratio = 0.5  # Start at neutral buoyancy
+        # Current ballast intake level (0.0: Empty/Positive Buoyancy, 1.0: Full/Negative Buoyancy)
+        self.ballast_fill_ratio = 0.0  # Start empty (positive buoyancy, natural nose-up trim)
         # Leg deployment configuration
         self.max_deploy_deg = 75.0     # Maximum opening angle (0 to 90 deg range)
         self.spread_factor = 1.5       # Spread factor: 1.5 allows side legs to deploy at 50% for membrane opening
@@ -120,14 +121,10 @@ class UnderwaterDynamics:
                         w = 0.0
                     leg_deploys[i] = stick_mag * w * self.max_deploy_deg
 
-            # IMU Posture Compensation (stabilize pitch tilt when stick is neutral or gentle)
-            if stick_mag < 0.3:
-                fade = 1.0 - (stick_mag / 0.3)
-                pitch_comp = float(np.clip(-pitch_deg * 0.4, -15.0, 15.0)) * fade
-                if pitch_comp > 0:
-                    leg_deploys[2] += pitch_comp  # Pitch down tilt -> deploy bottom leg
-                else:
-                    leg_deploys[0] += abs(pitch_comp)  # Pitch up tilt -> deploy top leg
+            # Natural Pitch & Buoyancy Trim:
+            # When stick is neutral, keep legs streamlined (0 deg) so the AUV's natural
+            # forward momentum and ballast buoyancy trim (nose-up when empty, nose-down when ballasted)
+            # can operate cleanly without artificial leg drag forcing the nose down.
 
             # Clamp all leg angles to [0.0, self.max_deploy_deg]
             leg_angles = [

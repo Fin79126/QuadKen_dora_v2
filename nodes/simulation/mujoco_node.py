@@ -60,6 +60,7 @@ class QuadKenMuJoCoSim:
         print(f"[MuJoCo Node] Loading model: {xml_path}")
         self.model = mujoco.MjModel.from_xml_path(xml_path)
         self.data = mujoco.MjData(self.model)
+        mujoco.mj_forward(self.model, self.data)
 
         # Offscreen camera renderer (Width 320, Height 240)
         self.cam_width = 320
@@ -67,7 +68,7 @@ class QuadKenMuJoCoSim:
         self.renderer = mujoco.Renderer(self.model, height=self.cam_height, width=self.cam_width)
 
         # Actuator parameters
-        self.max_thrust_n = 200.0  # Max thrust per BLDC thruster (N)
+        self.max_thrust_n = 300.0  # Max thrust per BLDC thruster (N)
 
         # Cached actuator commands
         self.target_bldc = [0.0, 0.0]        # PWM 0-100
@@ -84,8 +85,8 @@ class QuadKenMuJoCoSim:
         self.membrane_area_max = 0.08 # m^2 per deployed membrane quadrant (realistic fan area)
         self.drag_coeff = 1.2         # Longitudinal drag coefficient (Cd)
         self.lift_coeff = 1.0         # Normal / lateral steering force coefficient (Cl)
-        self.x_com = 0.28             # Center of Mass X in body frame (m, from quadken.xml)
-        self.z_com = -0.02            # Center of Mass Z in body frame (m, from quadken.xml)
+        self.x_com = 0.26             # Center of Mass X in body frame (m, from quadken.xml)
+        self.z_com = 0.0              # Center of Mass Z in body frame (aligned on centerline)
         self.leg_length = 0.30        # Leg strut length (m)
         self.hull_radius = 0.12       # Hull radius at aft hinge rim (m)
 
@@ -93,6 +94,12 @@ class QuadKenMuJoCoSim:
         self.last_render_time = 0.0
         self.render_interval = 0.04  # ~25 FPS for camera rendering
         self.encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 80]
+
+        # Free-chase camera that tracks AUV position & yaw without rolling (keeps horizon level)
+        self.chase_cam = mujoco.MjvCamera()
+        self.chase_cam.type = mujoco.mjtCamera.mjCAMERA_FREE
+        self.chase_cam.distance = 1.6
+        self.chase_cam.elevation = -26.0
 
     def set_actuator_commands(self, cmd_dict):
         """Parse actuator_cmd from pc/compute.py."""
@@ -112,7 +119,7 @@ class QuadKenMuJoCoSim:
             self.target_ballast = [float(servos2[i]) for i in range(4)]
 
     def apply_control_and_hydrodynamics(self):
-        """Apply actuator targets and hydrodynamic drag steering moments."""
+        """Apply actuator targets, hydrodynamic drag steering, and head ballast buoyancy shifts."""
         # 1. Apply BLDC forward thrust (Actuators 0 & 1)
         thrust_1 = (max(0.0, min(100.0, self.target_bldc[0])) / 100.0) * self.max_thrust_n
         thrust_2 = (max(0.0, min(100.0, self.target_bldc[1])) / 100.0) * self.max_thrust_n
@@ -183,11 +190,56 @@ class QuadKenMuJoCoSim:
                 total_body_force += f_vec
                 total_body_torque += torque_vec
 
-        # Transform to world coordinates and apply to auv root body
+        # Transform hydrodynamics to world coordinates
         world_force = rot_mat @ total_body_force
         world_torque = rot_mat @ total_body_torque
 
-        # Apply external force & torque to robot root body
+        # 5. Underwater Archimedes Buoyancy & Ballast Trim Dynamics:
+        # AUV subtree weight is ~74.16 N (7.56 kg * 9.81 m/s^2).
+        # Empty (ratio=0): Net positive buoyancy (+2.0 N upward) with CoB forward at X=0.234m,
+        # producing a natural nose-up pitch trim (+7 deg) and gentle surfacing.
+        # Ballasted (ratio>0): Ingests water at head ballast tank (X=0.65m), adding up to 3.5 N
+        # downward weight, which shifts CoM ahead of CoB (longitudinal trim reversal) and produces
+        # negative buoyancy (-1.5 N net downward), diving nose-first.
+        com_world = self.data.xipos[self.auv_body_id]
+
+        # Base upward buoyancy:
+        # CoB is strictly on the centerline (Y=0, Z=0) so roll restoring torque is 0.0!
+        f_buoy_mag = 76.16  # 74.16 N (gravity) + 2.0 N (empty positive buoyancy)
+        f_buoy_world = np.array([0.0, 0.0, f_buoy_mag])
+        p_cob_world = self.data.qpos[0:3] + rot_mat @ np.array([0.234, 0.0, 0.0])
+        r_cob = p_cob_world - com_world
+        tau_buoy = np.cross(r_cob, f_buoy_world)
+
+        world_force += f_buoy_world
+        world_torque += tau_buoy
+
+        # Head Ballast Water Intake (ESP2)
+        ballast_ratio = (np.mean(self.target_ballast) / 90.0) if self.target_ballast else 0.0
+        ballast_ratio = max(0.0, min(1.0, ballast_ratio))
+
+        if ballast_ratio > 0.001:
+            f_ballast_down = 3.5 * ballast_ratio
+            f_ballast_world = np.array([0.0, 0.0, -f_ballast_down])
+            p_ballast_world = self.data.qpos[0:3] + rot_mat @ np.array([0.65, 0.0, 0.0])
+            r_ballast = p_ballast_world - com_world
+            tau_ballast = np.cross(r_ballast, f_ballast_world)
+
+            world_force += f_ballast_world
+            world_torque += tau_ballast
+
+        # 6. Water Fluid Viscous Damping (Linear drag & selective angular damping)
+        f_viscous_damping = -15.0 * world_lin_vel
+        # Damp pitch and yaw rotations, but minimal damping on roll axis to allow free roll
+        w_world = self.data.qvel[3:6]
+        w_body = rot_mat.T @ w_world
+        tau_damp_body = np.array([-0.1 * w_body[0], -2.5 * w_body[1], -2.5 * w_body[2]])
+        tau_viscous_damping = rot_mat @ tau_damp_body
+
+        world_force += f_viscous_damping
+        world_torque += tau_viscous_damping
+
+        # Apply total external forces & torques to auv root body
         self.data.xfrc_applied[self.auv_body_id, 0:3] = world_force
         self.data.xfrc_applied[self.auv_body_id, 3:6] = world_torque
 
@@ -271,8 +323,17 @@ class QuadKenMuJoCoSim:
         return None
 
     def render_overhead_camera(self, bno_data):
-        """Render third-person overhead chase camera image and add HUD overlay."""
-        self.renderer.update_scene(self.data, camera="overhead_camera")
+        """Render third-person chase camera with level horizon (roll-free view)."""
+        yaw_deg = float(bno_data.get("yaw", 0.0))
+        # Look at the center of the AUV body
+        self.chase_cam.lookat = self.data.xpos[self.auv_body_id].copy()
+        # Azimuth follows yaw so the camera is positioned behind the AUV, looking forward.
+        # In MuJoCo free camera, azimuth=0 means the camera is at -X looking towards +X (forward).
+        self.chase_cam.distance = 1.7
+        self.chase_cam.azimuth = yaw_deg
+        self.chase_cam.elevation = -26.0
+
+        self.renderer.update_scene(self.data, camera=self.chase_cam)
         rgb_img = self.renderer.render()
         bgr_img = cv2.cvtColor(rgb_img, cv2.COLOR_RGB2BGR)
 
@@ -290,15 +351,16 @@ class QuadKenMuJoCoSim:
             cv2.LINE_AA,
         )
 
-        # Footer HUD: Forward Thrust and 4-Leg deploy angles
+        # Footer HUD: Forward Thrust, Ballast intake %, and 4-Leg deploy angles
         thrust_pct = int(self.target_bldc[0])
-        legs_str = f"THRUST:{thrust_pct}%  LEGS:[T:{int(self.target_legs[0])} R:{int(self.target_legs[1])} B:{int(self.target_legs[2])} L:{int(self.target_legs[3])}]"
+        ballast_pct = int((np.mean(self.target_ballast) / 90.0) * 100) if self.target_ballast else 0
+        legs_str = f"THRUST:{thrust_pct}%  BALLAST:{ballast_pct}%  LEGS:[T:{int(self.target_legs[0])} R:{int(self.target_legs[1])} B:{int(self.target_legs[2])} L:{int(self.target_legs[3])}]"
         cv2.putText(
             bgr_img,
             legs_str,
             (8, h - 10),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.32,
+            0.30,
             (255, 200, 100),
             1,
             cv2.LINE_AA,

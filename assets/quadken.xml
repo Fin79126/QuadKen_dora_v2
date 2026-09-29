@@ -103,12 +103,12 @@
       <!--
         Mass & Inertia Balance:
         Total weight: 8.0 kg (Gravity = 78.48 N)
-        Target Buoyancy: ~8.3 kgf = 81.42 N (Net +2.94 N upward)
-        Center of Gravity (CoG): Positioned towards aft/lower (X=0.28, Z=-0.02)
-        Center of Buoyancy (CoB): Positioned towards nose/upper (X=0.42, Z=+0.02)
-        -> Naturally produces nose-up static pitch trim!
+        Target Buoyancy: ~8.3 kgf = 81.42 N (Net +2.94 N upward when empty)
+        Center of Gravity (CoG): Positioned towards aft on centerline (X=0.26, Y=0, Z=0.0)
+        Center of Buoyancy (CoB): Positioned forward on centerline (X=0.48, Y=0, Z=0.0)
+        -> Longitudinal offset (not vertical) naturally produces nose-up pitch trim when empty!
       -->
-      <inertial pos="0.28 0 -0.02" mass="6.8" diaginertia="0.12 0.32 0.32"/>
+      <inertial pos="0.26 0 0" mass="6.8" diaginertia="0.12 0.32 0.32"/>
 
       <!-- ========================================== -->
       <!-- 1. MAIN CYLINDRICAL BODY (Diameter 24cm, Length 70cm) -->
@@ -126,8 +126,11 @@
       <geom name="intake_bottom" type="box" pos="0.74 0 -0.08" size="0.02 0.03 0.008" material="intake_mat" mass="0.01"/>
       <geom name="intake_left" type="box" pos="0.74 0.08 0" size="0.02 0.008 0.03" material="intake_mat" mass="0.01"/>
 
-      <!-- Internal Buoyancy Foam Block (Center of Buoyancy bias towards nose-up) -->
-      <geom name="buoyancy_pod" type="capsule" fromto="0.32 0 0.02  0.62 0 0.02" size="0.08" rgba="0.1 0.8 0.2 0.0" mass="0.1"/>
+      <!-- Internal Buoyancy Foam Block (Center of Buoyancy forward at X=0.35..0.65, Z=0.0) -->
+      <geom name="buoyancy_pod" type="capsule" fromto="0.35 0 0  0.65 0 0" size="0.08" rgba="0.1 0.8 0.2 0.0" mass="0.1"/>
+
+      <!-- Nose Ballast Chamber Site (Where intake water adds weight at X=0.65, Y=0, Z=0) -->
+      <site name="ballast_tank" pos="0.65 0 0" size="0.02" rgba="0 0.5 1 0.6"/>
 
       <!-- Sensors Site inside Hull -->
       <site name="imu_site" pos="0.35 0 0" size="0.02" rgba="1 0 0 1"/>
@@ -274,8 +277,8 @@
   <actuator>
     <!-- ===== ESP1: THRUST & DRAG-STEERING UNIT ===== -->
     <!-- 2x Forward BLDC Thrusters (Tandem In-Line, Counter-Rotating) -->
-    <motor name="bldc_thruster_1" site="thrust_site_1" gear="1.0 0 0  0.02 0 0" ctrllimited="true" ctrlrange="0 200"/>
-    <motor name="bldc_thruster_2" site="thrust_site_2" gear="1.0 0 0 -0.02 0 0" ctrllimited="true" ctrlrange="0 200"/>
+    <motor name="bldc_thruster_1" site="thrust_site_1" gear="1.0 0 0  0.02 0 0" ctrllimited="true" ctrlrange="0 400"/>
+    <motor name="bldc_thruster_2" site="thrust_site_2" gear="1.0 0 0 -0.02 0 0" ctrllimited="true" ctrlrange="0 400"/>
 
     <!-- 4x Membrane Leg Deployment Servos (Direct 0 to 90 degrees!) -->
     <general name="leg_servo_top" joint="joint_leg_top" class="servo_actuator"/>

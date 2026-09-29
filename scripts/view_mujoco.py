@@ -38,60 +38,90 @@ def apply_membrane_hydrodynamics(model, data, auv_body_id):
     body_lin_vel = rot_mat.T @ world_lin_vel
     u_forward = max(0.0, body_lin_vel[0])
 
-    if u_forward <= 0.01:
-        data.xfrc_applied[auv_body_id, :] = 0.0
-        return
-
     water_density = 1000.0
     membrane_area_max = 0.08
     drag_coeff = 1.2
     lift_coeff = 1.0
-    x_com = 0.28
-    z_com = -0.02
+    x_com = 0.26
+    z_com = 0.0
     leg_length = 0.30
     hull_radius = 0.12
 
-    q_dynamic = 0.5 * water_density * (u_forward ** 2)
     total_force = np.zeros(3)
     total_torque = np.zeros(3)
 
-    # Actuators 2..5 correspond to legs [Top, Right, Bottom, Left]
-    for i in range(4):
-        angle_deg = max(0.0, min(90.0, data.ctrl[2 + i]))
-        if angle_deg < 0.5:
-            continue
+    if u_forward > 0.01:
+        q_dynamic = 0.5 * water_density * (u_forward ** 2)
 
-        theta_rad = math.radians(angle_deg)
-        sin_th = math.sin(theta_rad)
-        cos_th = math.cos(theta_rad)
+        # Actuators 2..5 correspond to legs [Top, Right, Bottom, Left]
+        for i in range(4):
+            angle_deg = max(0.0, min(90.0, data.ctrl[2 + i]))
+            if angle_deg < 0.5:
+                continue
 
-        area = membrane_area_max * sin_th
-        f_drag = q_dynamic * drag_coeff * area
-        f_normal = q_dynamic * lift_coeff * area * cos_th
+            theta_rad = math.radians(angle_deg)
+            sin_th = math.sin(theta_rad)
+            cos_th = math.cos(theta_rad)
 
-        x_cp = -0.5 * leg_length * cos_th
-        r_cp = hull_radius + 0.5 * leg_length * sin_th
-        delta_x = x_cp - x_com
+            area = membrane_area_max * sin_th
+            f_drag = q_dynamic * drag_coeff * area
+            f_normal = q_dynamic * lift_coeff * area * cos_th
 
-        if i == 0:  # Top
-            r_vec = np.array([delta_x, 0.0, r_cp - z_com])
-            f_vec = np.array([-f_drag, 0.0, -f_normal])
-        elif i == 1:  # Right
-            r_vec = np.array([delta_x, -r_cp, 0.0 - z_com])
-            f_vec = np.array([-f_drag, +f_normal, 0.0])
-        elif i == 2:  # Bottom
-            r_vec = np.array([delta_x, 0.0, -r_cp - z_com])
-            f_vec = np.array([-f_drag, 0.0, +f_normal])
-        elif i == 3:  # Left
-            r_vec = np.array([delta_x, +r_cp, 0.0 - z_com])
-            f_vec = np.array([-f_drag, -f_normal, 0.0])
+            x_cp = -0.5 * leg_length * cos_th
+            r_cp = hull_radius + 0.5 * leg_length * sin_th
+            delta_x = x_cp - x_com
 
-        torque_vec = np.cross(r_vec, f_vec)
-        total_force += f_vec
-        total_torque += torque_vec
+            if i == 0:  # Top
+                r_vec = np.array([delta_x, 0.0, r_cp - z_com])
+                f_vec = np.array([-f_drag, 0.0, -f_normal])
+            elif i == 1:  # Right
+                r_vec = np.array([delta_x, -r_cp, 0.0 - z_com])
+                f_vec = np.array([-f_drag, +f_normal, 0.0])
+            elif i == 2:  # Bottom
+                r_vec = np.array([delta_x, 0.0, -r_cp - z_com])
+                f_vec = np.array([-f_drag, 0.0, +f_normal])
+            elif i == 3:  # Left
+                r_vec = np.array([delta_x, +r_cp, 0.0 - z_com])
+                f_vec = np.array([-f_drag, -f_normal, 0.0])
 
-    data.xfrc_applied[auv_body_id, 0:3] = rot_mat @ total_force
-    data.xfrc_applied[auv_body_id, 3:6] = rot_mat @ total_torque
+            torque_vec = np.cross(r_vec, f_vec)
+            total_force += f_vec
+            total_torque += torque_vec
+
+    world_force = rot_mat @ total_force
+    world_torque = rot_mat @ total_torque
+
+    # Underwater Archimedes Buoyancy & Ballast Trim Dynamics
+    com_world = data.xipos[auv_body_id]
+
+    # Base upward buoyancy (Z=0.0 on centerline to eliminate roll restoring torque)
+    f_buoy_mag = 76.16
+    f_buoy_world = np.array([0.0, 0.0, f_buoy_mag])
+    p_cob_world = data.qpos[0:3] + rot_mat @ np.array([0.234, 0.0, 0.0])
+    tau_buoy = np.cross(p_cob_world - com_world, f_buoy_world)
+    world_force += f_buoy_world
+    world_torque += tau_buoy
+
+    # Actuators 6..9 correspond to head ballast servos (0 to 90 deg)
+    ballast_ratio = np.mean([data.ctrl[6 + j] for j in range(4)]) / 90.0
+    ballast_ratio = max(0.0, min(1.0, ballast_ratio))
+    if ballast_ratio > 0.001:
+        f_ballast_down = 3.5 * ballast_ratio
+        f_ballast_world = np.array([0.0, 0.0, -f_ballast_down])
+        p_ballast_world = data.qpos[0:3] + rot_mat @ np.array([0.65, 0.0, 0.0])
+        tau_ballast = np.cross(p_ballast_world - com_world, f_ballast_world)
+        world_force += f_ballast_world
+        world_torque += tau_ballast
+
+    # Viscous fluid damping (pitch/yaw damped, minimal roll damping)
+    world_force += -15.0 * world_lin_vel
+    w_world = data.qvel[3:6]
+    w_body = rot_mat.T @ w_world
+    tau_damp_body = np.array([-0.1 * w_body[0], -2.5 * w_body[1], -2.5 * w_body[2]])
+    world_torque += rot_mat @ tau_damp_body
+
+    data.xfrc_applied[auv_body_id, 0:3] = world_force
+    data.xfrc_applied[auv_body_id, 3:6] = world_torque
 
 
 def main():
