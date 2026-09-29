@@ -54,6 +54,11 @@
     <material name="propeller_ccw" rgba="0.8 0.4 0.1 0.9"/>
     <!-- Translucent flexible inter-leg membrane -->
     <material name="membrane_mat" rgba="0.80 0.92 1.0 0.55" shininess="0.9" specular="0.8"/>
+    <!-- Underwater targets and landmarks -->
+    <material name="gate_mat" rgba="0.95 0.75 0.1 1.0" shininess="0.7"/>
+    <material name="buoy_red" rgba="0.9 0.15 0.15 1.0" shininess="0.8"/>
+    <material name="buoy_green" rgba="0.15 0.85 0.25 1.0" shininess="0.8"/>
+    <material name="pillar_mat" rgba="0.4 0.45 0.5 1.0"/>
   </asset>
 
   <worldbody>
@@ -61,7 +66,31 @@
     <light directional="false" pos="2 2 3" diffuse="0.3 0.5 0.6"/>
 
     <!-- Seafloor at 5m depth -->
-    <geom name="seafloor" type="plane" pos="0 0 -5.0" size="20 20 0.1" material="seafloor_mat"/>
+    <geom name="seafloor" type="plane" pos="0 0 -5.0" size="30 30 0.1" material="seafloor_mat"/>
+
+    <!-- Underwater Navigation Gate 1 (at X=3m, submerged at Z=-1.5m) -->
+    <body name="gate_1" pos="3.0 0 -1.5">
+      <geom name="gate_1_left" type="cylinder" fromto="0 -0.8 -0.8  0 -0.8 0.8" size="0.04" material="gate_mat"/>
+      <geom name="gate_1_right" type="cylinder" fromto="0 0.8 -0.8   0 0.8 0.8" size="0.04" material="gate_mat"/>
+      <geom name="gate_1_top" type="cylinder" fromto="0 -0.8 0.8   0 0.8 0.8" size="0.04" material="gate_mat"/>
+    </body>
+
+    <!-- Underwater Navigation Gate 2 (at X=6.5m, submerged at Z=-1.8m) -->
+    <body name="gate_2" pos="6.5 0.5 -1.8">
+      <geom name="gate_2_left" type="cylinder" fromto="0 -0.8 -0.8  0 -0.8 0.8" size="0.04" material="gate_mat"/>
+      <geom name="gate_2_right" type="cylinder" fromto="0 0.8 -0.8   0 0.8 0.8" size="0.04" material="gate_mat"/>
+      <geom name="gate_2_top" type="cylinder" fromto="0 -0.8 0.8   0 0.8 0.8" size="0.04" material="gate_mat"/>
+    </body>
+
+    <!-- Navigation Buoys / Markers -->
+    <geom name="marker_buoy_1" type="sphere" pos="2.0 1.2 -1.5" size="0.15" material="buoy_red"/>
+    <geom name="marker_buoy_2" type="sphere" pos="4.5 -1.2 -1.6" size="0.15" material="buoy_green"/>
+    <geom name="marker_buoy_3" type="sphere" pos="8.0 0.0 -1.5" size="0.20" material="buoy_red"/>
+
+    <!-- Seafloor Coral / Rock Pillars -->
+    <geom name="rock_1" type="cylinder" fromto="1.5 2.0 -5.0  1.5 2.0 -2.5" size="0.3" material="pillar_mat"/>
+    <geom name="rock_2" type="cylinder" fromto="5.0 -2.5 -5.0  5.0 -2.5 -2.0" size="0.4" material="pillar_mat"/>
+    <geom name="rock_3" type="cylinder" fromto="8.5 2.0 -5.0  8.5 2.0 -2.2" size="0.35" material="pillar_mat"/>
 
     <!-- ============================================================ -->
     <!-- QUADKEN AUV ROBOT ROOT                                      -->
@@ -103,6 +132,10 @@
       <!-- Sensors Site inside Hull -->
       <site name="imu_site" pos="0.35 0 0" size="0.02" rgba="1 0 0 1"/>
       <site name="depth_sensor_site" pos="0.68 0 -0.08" size="0.01" rgba="0 1 1 1"/>
+
+      <!-- Forward Underwater Camera & Optics Lens -->
+      <geom name="camera_lens" type="sphere" pos="0.81 0 0" size="0.03" rgba="0.1 0.1 0.2 0.8" mass="0.01"/>
+      <camera name="front_camera" pos="0.82 0 0" xyaxes="0 -1 0 0 0 1" fovy="75"/>
 
       <!-- ========================================== -->
       <!-- 2. BLDC THRUSTERS (Dual Tandem, Inside 4 Legs) -->

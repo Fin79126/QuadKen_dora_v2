@@ -1,0 +1,70 @@
+# MuJoCo Physics SITL Dataflow for QuadKen AUV
+# Combines MuJoCo physics engine with dora-rs, providing virtual BNO055 & virtual underwater camera.
+nodes:
+  # ============================================================
+  # PC CONTROL & VISUALIZATION NODES
+  # ============================================================
+  - id: controller
+    path: nodes/pc/controller.py
+    inputs:
+      tick: dora/timer/millis/100
+    outputs:
+      - control_cmd
+
+  - id: compute
+    path: nodes/pc/compute.py
+    inputs:
+      control_cmd:
+        source: controller/control_cmd
+        queue_size: 5
+      bno_data:
+        source: mujoco_sim/bno_data
+        queue_size: 5
+      esp_status:
+        source: mujoco_sim/esp_status
+        queue_size: 5
+      esp_telemetry:
+        source: mujoco_sim/esp_telemetry
+        queue_size: 5
+    outputs:
+      - actuator_cmd
+      - compute_status
+
+  - id: visualizer
+    path: nodes/pc/visualizer.py
+    inputs:
+      image:
+        source: mujoco_sim/image
+        queue_size: 5
+      bno_data:
+        source: mujoco_sim/bno_data
+        queue_size: 5
+      control_cmd:
+        source: controller/control_cmd
+        queue_size: 5
+      compute_status:
+        source: compute/compute_status
+        queue_size: 5
+      esp_status:
+        source: mujoco_sim/esp_status
+        queue_size: 5
+      esp_telemetry:
+        source: mujoco_sim/esp_telemetry
+        queue_size: 5
+
+  # ============================================================
+  # MUJOCO DIGITAL TWIN SIMULATION NODE
+  # Physics Engine + Virtual BNO055 IMU + Virtual Underwater Camera
+  # ============================================================
+  - id: mujoco_sim
+    path: nodes/simulation/mujoco_node.py
+    inputs:
+      tick: dora/timer/millis/20
+      actuator_cmd:
+        source: compute/actuator_cmd
+        queue_size: 5
+    outputs:
+      - bno_data
+      - image
+      - esp_status
+      - esp_telemetry

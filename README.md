@@ -141,9 +141,32 @@ uv run dora trace view <TRACE_ID>
 
 すべて `uv` のみで実行可能です。
 
-### A. PCローカルでの動作確認（実機がなくてもすぐテスト可能）
+### A. PCローカルでの MuJoCo 物理SITLシミュレーション（推奨・実機レス）
 
-ESPシミュレータと全ノードをPC上でまとめて動かせます。Git Bash から以下を実行します：
+MuJoCo 物理エンジンと dora-rs を直結し、**仮想BNO055（IMU姿勢）** と **仮想前方カメラ（水中HUD映像）** を使って完全な閉ループテストを実行できます。ESPシミュレータの起動も不要です。
+
+```powershell
+# PowerShell (Windows)
+./scripts/run_local_mujoco.ps1
+
+# または直接 dora run
+uv run dora run dataflow_mujoco.yml --uv
+```
+
+```bash
+# Git Bash / Linux
+./scripts/run_local_mujoco.sh
+```
+
+* **仮想 BNO055**: MuJoCo 内の機体姿勢からリアルタイムにオイラー角(Roll/Pitch/Yaw)、角速度、水深を計算して `compute` と `visualizer` に配信。
+* **仮想 前方水中カメラ**: 円筒ノーズ先端のカメラからレンダリングした水中映像（ナビゲーションゲートやブイ、海底、HUDオーバーレイ付き）を Rerun へストリーミング。
+* **膜展開 抵抗操舵**: コントローラー入力に応じて脚が開くと、前進水流から生じる抗力モーメント（ヨー・ピッチ）を物理エンジン上でリアルタイムに印加。
+
+---
+
+### B. PCローカルでの簡易ESPモック動作確認
+
+従来のダミーESPシミュレータを用いた動作確認です：
 
 ```bash
 # 1. 依存関係の同期 (初回のみ)
