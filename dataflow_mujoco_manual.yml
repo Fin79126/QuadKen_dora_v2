@@ -1,12 +1,10 @@
-# Distributed Dataflow for QuadKen (PC <-> Raspberry Pi)
-# Uses dora-rs to orchestrate nodes across PC and Raspberry Pi.
+# MuJoCo Physics SITL Dataflow for QuadKen AUV (Manual Gamepad/Keyboard Control)
+# Combines MuJoCo physics engine with dora-rs, providing virtual BNO055 & virtual underwater camera.
 nodes:
   # ============================================================
-  # PC NODES
+  # PC MANUAL CONTROL & VISUALIZATION NODES
   # ============================================================
   - id: controller
-    deploy:
-      machine: pc
     path: nodes/pc/controller.py
     inputs:
       tick: dora/timer/millis/100
@@ -14,36 +12,35 @@ nodes:
       - control_cmd
 
   - id: compute
-    deploy:
-      machine: pc
     path: nodes/pc/compute.py
     inputs:
       control_cmd:
         source: controller/control_cmd
         queue_size: 5
       bno_data:
-        source: bno/bno_data
+        source: mujoco_sim/bno_data
         queue_size: 5
       esp_status:
-        source: esp_bridge/esp_status
+        source: mujoco_sim/esp_status
         queue_size: 5
       esp_telemetry:
-        source: esp_bridge/esp_telemetry
+        source: mujoco_sim/esp_telemetry
         queue_size: 5
     outputs:
       - actuator_cmd
       - compute_status
 
   - id: visualizer
-    deploy:
-      machine: pc
     path: nodes/pc/visualizer.py
     inputs:
       image:
-        source: camera/image
+        source: mujoco_sim/image
+        queue_size: 5
+      image_overhead:
+        source: mujoco_sim/image_overhead
         queue_size: 5
       bno_data:
-        source: bno/bno_data
+        source: mujoco_sim/bno_data
         queue_size: 5
       control_cmd:
         source: controller/control_cmd
@@ -52,42 +49,33 @@ nodes:
         source: compute/compute_status
         queue_size: 5
       esp_status:
-        source: esp_bridge/esp_status
+        source: mujoco_sim/esp_status
         queue_size: 5
       esp_telemetry:
-        source: esp_bridge/esp_telemetry
+        source: mujoco_sim/esp_telemetry
+        queue_size: 5
+      target_relative_info:
+        source: mujoco_sim/target_relative_info
         queue_size: 5
 
   # ============================================================
-  # RASPBERRY PI NODES
+  # MUJOCO DIGITAL TWIN SIMULATION NODE
+  # Physics Engine + Virtual BNO055 IMU + Virtual Underwater Camera
   # ============================================================
-  - id: camera
-    deploy:
-      machine: raspi
-    path: nodes/raspi/camera.py
-    inputs:
-      tick: dora/timer/millis/40
-    outputs:
-      - image
-
-  - id: bno
-    deploy:
-      machine: raspi
-    path: nodes/raspi/bno.py
-    inputs:
-      tick: dora/timer/millis/20
-    outputs:
-      - bno_data
-
-  - id: esp_bridge
-    deploy:
-      machine: raspi
-    path: nodes/raspi/esp_bridge.py
+  - id: mujoco_sim
+    path: nodes/simulation/mujoco_node.py
+    env:
+      BALLOON_RANDOM_SPAWN: "true"
+      BALLOON_RESPAWN_MODE: "batch"
     inputs:
       tick: dora/timer/millis/20
       actuator_cmd:
         source: compute/actuator_cmd
         queue_size: 5
     outputs:
+      - bno_data
+      - image
+      - image_overhead
       - esp_status
       - esp_telemetry
+      - target_relative_info

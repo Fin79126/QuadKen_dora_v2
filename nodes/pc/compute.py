@@ -1,16 +1,21 @@
 """
-PC Compute Node (QuadKen Brain)
-Performs kinematic calculations, posture stabilization, and gait generation.
+PC Compute Node (QuadKen Underwater Brain)
+Performs:
+  - Drag-based Steering kinematics (4 membrane-connected legs for Yaw/Pitch control)
+  - Forward BLDC Propulsion allocation (2x synchronized forward thrusters)
+  - Buoyancy & Ballast control (4x head water-intake servos)
+  - IMU posture stabilization & Failsafe monitoring
 Subscribes to:
-  - control_cmd: Target velocities and modes from pc/controller
-  - bno_data: IMU orientation and inertial data from raspi/bno
+  - control_cmd: Throttle, steering, ballast, and brake from pc/controller
+  - bno_data: Underwater orientation and IMU readings from raspi/bno
   - esp_status: TCP connection states from raspi/esp_bridge
-  - esp_telemetry: UDP feedback from raspi/esp_bridge
+  - esp_telemetry: UDP sensor feedback from raspi/esp_bridge
 Publishes:
-  - actuator_cmd: Servo angles and motor commands destined for the 2 ESPs
+  - actuator_cmd: ESP1 (4 leg servos + 2 BLDC) & ESP2 (4 ballast servos)
   - compute_status: High-level calculation state for Rerun visualizer
 """
 
+import sys
 import time
 import json
 import math
@@ -26,69 +31,128 @@ except ImportError:
     tracer = None
 
 
-class QuadrupedKinematics:
+class UnderwaterDynamics:
     """
-    Inverse Kinematics and Gait calculation for QuadKen.
-    Computes 12 joint angles (6 for ESP1, 6 for ESP2).
+    Kinematics and Hydrodynamics controller for QuadKen AUV.
+    
+    Actuators:
+      - ESP1:
+          * 4 Servos: Membrane leg deployment angles [Leg1:Top, Leg2:Right, Leg3:Bottom, Leg4:Left]
+            (0 deg = fully closed/streamlined, 75 deg = maximum deployed drag)
+          * 2 Motors: BLDC forward thrusters [BLDC_L, BLDC_R] (0 to 100% PWM)
+      - ESP2:
+          * 4 Servos: Head water-intake ballast servos [Ballast_1, Ballast_2, Ballast_3, Ballast_4]
+            (0 deg = closed/sealed, 90 deg = full intake opening)
     """
+
     def __init__(self):
-        self.phase = 0.0
-        self.gait_frequency = 1.5  # Hz
+        # Current ballast intake level (0.0: Empty/Positive Buoyancy, 1.0: Full/Negative Buoyancy)
+        # Current ballast intake level (0.0: Empty/Positive Buoyancy, 1.0: Full/Negative Buoyancy)
+        self.ballast_fill_ratio = 0.0  # Start empty (positive buoyancy, natural nose-up trim)
+        # Leg deployment configuration
+        self.max_deploy_deg = 75.0     # Maximum opening angle (0 to 90 deg range)
+        self.spread_factor = 1.5       # Spread factor: 1.5 allows side legs to deploy at 50% for membrane opening
 
-    def update_gait(self, dt: float, vx: float, vyaw: float, height: float, roll_comp: float, pitch_comp: float):
-        self.phase = (self.phase + 2.0 * math.pi * self.gait_frequency * dt) % (2.0 * math.pi)
+    def compute_actuators(
+        self,
+        dt: float,
+        throttle: float,
+        steer_yaw: float,
+        steer_pitch: float,
+        steer_roll: float,
+        ballast_cmd: float,
+        brake: bool,
+        roll_deg: float,
+        pitch_deg: float,
+        stick_right_x: float = None,
+        stick_right_y: float = None,
+    ):
+        # 1. Forward BLDC Propulsion
+        # Left stick operates whole-body forward propulsion. Clamp throttle to [0.0, 1.0].
+        fwd_thrust = max(0.0, min(1.0, throttle))
 
-        # Baseline stand angles (degrees)
-        hip_base = 0.0
-        thigh_base = 35.0
-        calf_base = -65.0
+        if brake:
+            bldc_pwm = [0, 0]
+        else:
+            pwm_val = int(round(fwd_thrust * 100))
+            bldc_pwm = [pwm_val, pwm_val]
 
-        # Simple sinusoidal gait modulation for walking
-        amp_swing = 15.0 * vx
-        fl_leg = math.sin(self.phase) * amp_swing
-        fr_leg = math.sin(self.phase + math.pi) * amp_swing
-        rl_leg = math.sin(self.phase + math.pi) * amp_swing
-        rr_leg = math.sin(self.phase) * amp_swing
+        # 2. Drag Steering (4 Membrane Legs: [0: Top, 1: Right, 2: Bottom, 3: Left])
+        # Direct degree control (0 deg = closed/streamlined, max_deploy_deg = full deploy)
+        if brake:
+            # Full 4-leg umbrella deployment for hydrodynamic braking
+            leg_angles = [self.max_deploy_deg] * 4
+        else:
+            # Parse right-stick directional vector (X: Right/Left, Y: Up/Down)
+            sx = stick_right_x if stick_right_x is not None else steer_yaw
+            sy = stick_right_y if stick_right_y is not None else steer_pitch
 
-        # ESP1 (Front Legs: FL + FR = 6 servos)
-        esp1_servos = [
-            hip_base + roll_comp * 10.0,
-            thigh_base + fl_leg + pitch_comp * 10.0,
-            calf_base - fl_leg,
-            -hip_base - roll_comp * 10.0,
-            thigh_base + fr_leg + pitch_comp * 10.0,
-            calf_base - fr_leg,
-        ]
+            stick_mag = min(1.0, math.hypot(sx, sy))
 
-        # ESP2 (Rear Legs: RL + RR = 6 servos)
-        esp2_servos = [
-            hip_base + roll_comp * 10.0,
-            thigh_base + rl_leg - pitch_comp * 10.0,
-            calf_base - rl_leg,
-            -hip_base - roll_comp * 10.0,
-            thigh_base + rr_leg - pitch_comp * 10.0,
-            calf_base - rr_leg,
-        ]
+            # Nominal leg orientation angles in robot rear-facing projection (u: Right, v: Top):
+            # Leg 0 (Top): pi/2 (+90 deg)
+            # Leg 1 (Right): 0.0 (0 deg)
+            # Leg 2 (Bottom): -pi/2 (-90 deg)
+            # Leg 3 (Left): pi (180 deg)
+            leg_nominals = [math.pi / 2.0, 0.0, -math.pi / 2.0, math.pi]
+            leg_deploys = [0.0, 0.0, 0.0, 0.0]
 
-        # Clamp servo angles to safe range [-90, 90]
-        esp1_servos = [round(float(np.clip(a, -90.0, 90.0)), 2) for a in esp1_servos]
-        esp2_servos = [round(float(np.clip(a, -90.0, 90.0)), 2) for a in esp2_servos]
+            if stick_mag > 0.05:
+                # User stick direction angle (rad) in operator/world perspective
+                stick_angle = math.atan2(sy, sx)
 
-        # Auxiliary motor speeds (-100 to 100 PWM)
-        esp1_motors = [int(np.clip(vx * 100, -100, 100)), int(np.clip(vx * 100, -100, 100))]
-        esp2_motors = [int(np.clip(vx * 100, -100, 100)), int(np.clip(vx * 100, -100, 100))]
+                # BNO Orientation Compensation (Head-up mode):
+                # When robot rolls by roll_deg, rotate stick angle into robot body frame so that
+                # pushing the stick UP always deploys whichever leg is physically on top in world gravity!
+                target_body_angle = stick_angle + math.radians(roll_deg)
 
-        return esp1_servos, esp1_motors, esp2_servos, esp2_motors
+                # Fan / Membrane Spread deployment:
+                # Main leg deploys 100%. Side adjacent legs (at 90 deg) deploy at cos(90/1.5) = 50%
+                # to fan out the membrane skins between legs for maximum steering bite.
+                # Opposite legs (> 135 deg) remain fully closed.
+                for i in range(4):
+                    diff = math.atan2(
+                        math.sin(target_body_angle - leg_nominals[i]),
+                        math.cos(target_body_angle - leg_nominals[i]),
+                    )
+                    if abs(diff) < math.radians(135.0):
+                        w = math.cos(diff / self.spread_factor)
+                    else:
+                        w = 0.0
+                    leg_deploys[i] = stick_mag * w * self.max_deploy_deg
+
+            # Natural Pitch & Buoyancy Trim:
+            # When stick is neutral, keep legs streamlined (0 deg) so the AUV's natural
+            # forward momentum and ballast buoyancy trim (nose-up when empty, nose-down when ballasted)
+            # can operate cleanly without artificial leg drag forcing the nose down.
+
+            # Clamp all leg angles to [0.0, self.max_deploy_deg]
+            leg_angles = [
+                round(float(np.clip(leg_deploys[i], 0.0, self.max_deploy_deg)), 1)
+                for i in range(4)
+            ]
+
+        # 3. Head Water-Intake Ballast Servos (ESP2)
+        # 4 servos at the cylindrical nose adjust internal water intake
+        # ballast_cmd: -1.0 (purge/surface) to +1.0 (intake/dive)
+        self.ballast_fill_ratio = float(
+            np.clip(self.ballast_fill_ratio + ballast_cmd * 0.2 * dt, 0.0, 1.0)
+        )
+        ballast_angle = round(float(self.ballast_fill_ratio * 90.0), 1)
+        ballast_servos = [ballast_angle] * 4
+
+        return leg_angles, bldc_pwm, ballast_servos
 
 
 def main():
     node = Node()
-    kinematics = QuadrupedKinematics()
+    dynamics = UnderwaterDynamics()
 
     # Cached states
     control_cmd = {
-        "vx": 0.0, "vy": 0.0, "vyaw": 0.0, "body_height": 0.25,
-        "roll": 0.0, "pitch": 0.0, "gait_mode": 1, "e_stop": False
+        "throttle": 0.0, "steer_yaw": 0.0, "steer_pitch": 0.0, "steer_roll": 0.0,
+        "ballast": 0.0, "brake": False, "e_stop": False,
+        "vx": 0.0, "vyaw": 0.0, "pitch": 0.0
     }
     bno_data = {
         "roll": 0.0, "pitch": 0.0, "yaw": 0.0,
@@ -103,101 +167,132 @@ def main():
     last_time = time.time()
     seq = 0
 
-    for event in node:
-        event_type = event["type"]
-        if event_type == "STOP":
-            print("[Compute] Received STOP event. Exiting.")
-            sys.exit(0)
+    try:
+        for event in node:
+            event_type = event["type"]
+            if event_type == "STOP":
+                print("[Compute] Received STOP event. Exiting.")
+                break
 
-        if event_type == "INPUT":
-            input_id = event["id"]
-            raw_value = event["value"]
+            if event_type == "INPUT":
+                input_id = event["id"]
+                raw_value = event["value"]
 
-            try:
-                # Value can be Arrow array of strings/bytes
-                raw_bytes = raw_value.to_pylist()[0]
-                if isinstance(raw_bytes, str):
-                    parsed_json = json.loads(raw_bytes)
+                try:
+                    raw_bytes = raw_value.to_pylist()[0]
+                    if isinstance(raw_bytes, str):
+                        parsed_json = json.loads(raw_bytes)
+                    else:
+                        parsed_json = json.loads(raw_bytes.decode("utf-8"))
+                except Exception:
+                    parsed_json = {}
+
+                if input_id == "control_cmd":
+                    control_cmd.update(parsed_json)
+                elif input_id == "bno_data":
+                    bno_data.update(parsed_json)
+                elif input_id == "esp_status":
+                    esp_status.update(parsed_json)
+                elif input_id == "esp_telemetry":
+                    esp_telemetry.update(parsed_json)
+
+                # Execute computation on 50Hz clock / at least 20ms interval
+                now = time.time()
+                if input_id != "bno_data" and (now - last_time < 0.02):
+                    continue
+
+                dt = max(0.005, min(0.1, now - last_time))
+                last_time = now
+
+                # Failsafe and State machine
+                is_estop = control_cmd.get("e_stop", False)
+                esp1_connected = esp_status.get("esp1", {}).get("connected", False)
+                esp2_connected = esp_status.get("esp2", {}).get("connected", False)
+
+                throttle = control_cmd.get("throttle", control_cmd.get("vx", 0.0))
+                steer_yaw = control_cmd.get("steer_yaw", control_cmd.get("vyaw", 0.0))
+                steer_pitch = control_cmd.get("steer_pitch", control_cmd.get("pitch", 0.0))
+                steer_roll = control_cmd.get("steer_roll", 0.0)
+                stick_rx = control_cmd.get("stick_right_x", steer_yaw)
+                stick_ry = control_cmd.get("stick_right_y", steer_pitch)
+                ballast_cmd = control_cmd.get("ballast", 0.0)
+                brake = control_cmd.get("brake", False)
+
+                stick_mag = math.hypot(stick_rx, stick_ry)
+
+                if is_estop:
+                    robot_state = "EMERGENCY_STOP"
+                elif not esp1_connected or not esp2_connected:
+                    robot_state = "FAILSAFE_ESP_DISCONNECTED"
+                elif brake:
+                    robot_state = "HYDRO_BRAKING"
+                elif throttle > 0.05:
+                    if stick_mag > 0.1:
+                        robot_state = "DRAG_STEERING"
+                    else:
+                        robot_state = "CRUISING"
+                elif stick_mag > 0.1:
+                    robot_state = "DRAG_STEERING"
                 else:
-                    parsed_json = json.loads(raw_bytes.decode("utf-8"))
-            except Exception:
-                parsed_json = {}
+                    robot_state = "IDLE_HOVER"
 
-            if input_id == "control_cmd":
-                control_cmd.update(parsed_json)
-            elif input_id == "bno_data":
-                bno_data.update(parsed_json)
-            elif input_id == "esp_status":
-                esp_status.update(parsed_json)
-            elif input_id == "esp_telemetry":
-                esp_telemetry.update(parsed_json)
+                # Safety overrides
+                if robot_state in ("EMERGENCY_STOP", "FAILSAFE_ESP_DISCONNECTED"):
+                    # Stop BLDC, purge ballast for emergency ascent, deploy legs for drift stability
+                    esp1_servos = [45.0] * 4
+                    esp1_motors = [0, 0]
+                    esp2_servos = [0.0] * 4  # Close water intake (purge/surface)
+                else:
+                    esp1_servos, esp1_motors, esp2_servos = dynamics.compute_actuators(
+                        dt=dt,
+                        throttle=throttle,
+                        steer_yaw=steer_yaw,
+                        steer_pitch=steer_pitch,
+                        steer_roll=steer_roll,
+                        ballast_cmd=ballast_cmd,
+                        brake=brake,
+                        roll_deg=float(bno_data.get("roll", 0.0)),
+                        pitch_deg=float(bno_data.get("pitch", 0.0)),
+                        stick_right_x=stick_rx,
+                        stick_right_y=stick_ry,
+                    )
 
-            # Compute loop triggered by control_cmd or timer
-            now = time.time()
-            dt = max(0.005, min(0.1, now - last_time))
-            last_time = now
+                seq += 1
+                actuator_cmd = {
+                    "seq": seq,
+                    "timestamp": now,
+                    "robot_state": robot_state,
+                    "esp1": {
+                        "name": "Thrust_Steer",
+                        "servos": esp1_servos,   # [Top, Right, Bottom, Left] deploy angles
+                        "motors": esp1_motors,   # [BLDC_1, BLDC_2] forward thrust PWM
+                    },
+                    "esp2": {
+                        "name": "Ballast",
+                        "servos": esp2_servos,   # 4 head water intake servos
+                        "motors": [],
+                    },
+                }
 
-            # Check E-Stop condition (software e-stop or ESP disconnected)
-            is_estop = control_cmd.get("e_stop", False)
-            esp1_connected = esp_status.get("esp1", {}).get("connected", False)
-            esp2_connected = esp_status.get("esp2", {}).get("connected", False)
+                compute_status = {
+                    "seq": seq,
+                    "robot_state": robot_state,
+                    "throttle_pct": esp1_motors[0] if esp1_motors else 0,
+                    "leg_deploy_angles": esp1_servos,
+                    "ballast_intake_deg": esp2_servos[0] if esp2_servos else 0.0,
+                    "ballast_fill_ratio": round(float(dynamics.ballast_fill_ratio), 2),
+                    "dt_ms": round(float(dt * 1000.0), 2),
+                    "esp1_connected": esp1_connected,
+                    "esp2_connected": esp2_connected,
+                }
 
-            if is_estop:
-                robot_state = "EMERGENCY_STOP"
-            elif not esp1_connected or not esp2_connected:
-                robot_state = "FAILSAFE_ESP_DISCONNECTED"
-            elif control_cmd.get("gait_mode", 0) == 0:
-                robot_state = "STAND"
-            else:
-                robot_state = "WALKING"
-
-            # Posture compensation from IMU
-            roll_comp = -float(bno_data.get("roll", 0.0)) * 0.2
-            pitch_comp = -float(bno_data.get("pitch", 0.0)) * 0.2
-
-            if robot_state in ("EMERGENCY_STOP", "FAILSAFE_ESP_DISCONNECTED"):
-                # Neutral safe position with motors disabled
-                esp1_servos = [0.0] * 6
-                esp1_motors = [0, 0]
-                esp2_servos = [0.0] * 6
-                esp2_motors = [0, 0]
-            else:
-                esp1_servos, esp1_motors, esp2_servos, esp2_motors = kinematics.update_gait(
-                    dt=dt,
-                    vx=control_cmd.get("vx", 0.0),
-                    vyaw=control_cmd.get("vyaw", 0.0),
-                    height=control_cmd.get("body_height", 0.25),
-                    roll_comp=roll_comp,
-                    pitch_comp=pitch_comp,
-                )
-
-            seq += 1
-            actuator_cmd = {
-                "seq": seq,
-                "timestamp": now,
-                "robot_state": robot_state,
-                "esp1": {
-                    "servos": esp1_servos,
-                    "motors": esp1_motors,
-                },
-                "esp2": {
-                    "servos": esp2_servos,
-                    "motors": esp2_motors,
-                },
-            }
-
-            compute_status = {
-                "seq": seq,
-                "robot_state": robot_state,
-                "phase": round(float(kinematics.phase), 2),
-                "dt_ms": round(float(dt * 1000.0), 2),
-                "esp1_connected": esp1_connected,
-                "esp2_connected": esp2_connected,
-            }
-
-            # Send output to dora network
-            node.send_output("actuator_cmd", pa.array([json.dumps(actuator_cmd).encode("utf-8")]))
-            node.send_output("compute_status", pa.array([json.dumps(compute_status).encode("utf-8")]))
+                # Send outputs to dora network
+                node.send_output("actuator_cmd", pa.array([json.dumps(actuator_cmd).encode("utf-8")]))
+                node.send_output("compute_status", pa.array([json.dumps(compute_status).encode("utf-8")]))
+    except KeyboardInterrupt:
+        pass
+    finally:
+        sys.exit(0)
 
 
 if __name__ == "__main__":

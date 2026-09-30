@@ -1,21 +1,49 @@
 """
-PC Rerun Visualizer Node
+PC Rerun Visualizer Node (QuadKen Underwater AUV)
 Subscribes to all robot dataflow streams and visualizes them in Rerun:
-  - camera/image: 2D camera feed
+  - image: 2D underwater forward camera feed
+  - image_overhead: 2D third-person chase/overhead camera feed
   - bno_data: 3D body orientation and gyro/accel time-series
-  - control_cmd: Command velocities and posture setpoints
-  - compute_status: State machine and gait phase
+  - control_cmd: Command velocities, steering setpoints, ballast level
+  - compute_status: AUV state, BLDC thrust, membrane leg deployment angles, ballast ratio
   - esp_status: TCP connection states and latency for ESP1 & ESP2
-  - esp_telemetry: UDP actuator feedback and telemetry
+  - esp_telemetry: UDP sensor readings and telemetry from ESP1 & ESP2
 """
 
+import os
+import sys
 import time
 import json
+import socket
 import cv2
 import numpy as np
 import pyarrow as pa
 import rerun as rr
 from dora import Node
+
+# Rerun archetype compatibility (Rerun 0.20+ uses Scalars instead of Scalar)
+rr_Scalar = getattr(rr, "Scalars", getattr(rr, "Scalar", None))
+
+_last_viewer_check = 0.0
+_viewer_alive = True
+
+
+def check_viewer_alive() -> bool:
+    """Check if Rerun Viewer gRPC server is responsive."""
+    global _last_viewer_check, _viewer_alive
+    now = time.time()
+    if now - _last_viewer_check < 0.5:
+        return _viewer_alive
+    _last_viewer_check = now
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(0.02)
+        res = s.connect_ex(("127.0.0.1", 9876))
+        s.close()
+        _viewer_alive = (res == 0)
+    except Exception:
+        _viewer_alive = False
+    return _viewer_alive
 
 
 def euler_to_quaternion(roll_deg: float, pitch_deg: float, yaw_deg: float):
@@ -40,141 +68,234 @@ def euler_to_quaternion(roll_deg: float, pitch_deg: float, yaw_deg: float):
 
 
 def main():
+    rr.init("QuadKen_Underwater_Telemetry", spawn=True)
+    try:
+        rr.unregister_shutdown()
+    except Exception:
+        pass
+    print("[Visualizer] Rerun Viewer initialized for QuadKen Underwater AUV.")
+
     node = Node()
 
-    # Initialize Rerun
-    rr.init("QuadKen_Dora_Telemetry", spawn=True)
-    print("[Visualizer] Rerun Viewer initialized.")
+    try:
+        for event in node:
+            event_type = event["type"]
+            if event_type == "STOP":
+                print("[Visualizer] Received STOP event. Exiting.")
+                break
 
-    for event in node:
-        event_type = event["type"]
-        if event_type == "STOP":
-            print("[Visualizer] Received STOP event. Exiting.")
-            try:
-                rr.disconnect()
-            except Exception:
-                pass
-            sys.exit(0)
+            if event_type == "INPUT":
+                if not check_viewer_alive():
+                    continue
 
-        if event_type == "INPUT":
-            input_id = event["id"]
-            raw_value = event["value"]
+                input_id = event["id"]
+                raw_value = event["value"]
 
-            # Handle Camera Images
-            if input_id == "image":
-                try:
-                    # Arrow array containing JPEG encoded bytes or raw array
-                    img_data = raw_value.to_pylist()[0]
-                    if isinstance(img_data, bytes):
-                        # Decode JPEG
-                        nparr = np.frombuffer(img_data, np.uint8)
-                        frame_bgr = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-                        if frame_bgr is not None:
-                            frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-                            rr.log("camera/feed", rr.Image(frame_rgb))
-                    elif hasattr(raw_value, "to_numpy"):
-                        np_img = raw_value.to_numpy()
-                        rr.log("camera/feed", rr.Image(np_img))
-                except Exception as e:
-                    pass
+                # 1. Handle Camera Images (Underwater Feed & Overhead Chase Feed)
+                if input_id in ("image", "image_annotated"):
+                    try:
+                        img_data = raw_value.to_pylist()[0]
+                        if isinstance(img_data, bytes):
+                            nparr = np.frombuffer(img_data, np.uint8)
+                            frame_bgr = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                            if frame_bgr is not None:
+                                frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+                                log_topic = "camera/feed" if input_id == "image_annotated" else "camera/raw_feed"
+                                rr.log(log_topic, rr.Image(frame_rgb))
+                                # Also mirror to camera/feed if raw image and no annotated available yet
+                                if input_id == "image":
+                                    rr.log("camera/feed", rr.Image(frame_rgb))
+                        elif hasattr(raw_value, "to_numpy"):
+                            np_img = raw_value.to_numpy()
+                            rr.log("camera/feed", rr.Image(np_img))
+                    except Exception as e:
+                        print(f"[Visualizer] Camera log error: {e}")
 
-            # Handle BNO IMU Data
-            elif input_id == "bno_data":
-                try:
-                    raw_bytes = raw_value.to_pylist()[0]
-                    data = json.loads(raw_bytes if isinstance(raw_bytes, str) else raw_bytes.decode("utf-8"))
+                elif input_id == "image_overhead":
+                    try:
+                        img_data = raw_value.to_pylist()[0]
+                        if isinstance(img_data, bytes):
+                            nparr = np.frombuffer(img_data, np.uint8)
+                            frame_bgr = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                            if frame_bgr is not None:
+                                frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+                                rr.log("camera/overhead", rr.Image(frame_rgb))
+                        elif hasattr(raw_value, "to_numpy"):
+                            np_img = raw_value.to_numpy()
+                            rr.log("camera/overhead", rr.Image(np_img))
+                    except Exception as e:
+                        print(f"[Visualizer] Overhead camera log error: {e}")
 
-                    roll = float(data.get("roll", 0.0))
-                    pitch = float(data.get("pitch", 0.0))
-                    yaw = float(data.get("yaw", 0.0))
-                    gyro = data.get("gyro", [0.0, 0.0, 0.0])
-                    accel = data.get("accel", [0.0, 0.0, 9.81])
+                # 2. Handle BNO IMU Data (Underwater Orientation)
+                elif input_id == "bno_data":
+                    try:
+                        raw_bytes = raw_value.to_pylist()[0]
+                        data = json.loads(raw_bytes if isinstance(raw_bytes, str) else raw_bytes.decode("utf-8"))
 
-                    # 3D Orientation transform
-                    quat_xyzw = euler_to_quaternion(roll, pitch, yaw)
-                    rr.log(
-                        "world/robot_base",
-                        rr.Transform3D(
-                            rotation=rr.Quaternion(xyzw=quat_xyzw),
-                            translation=[0.0, 0.0, 0.25],
-                        ),
-                    )
+                        roll = float(data.get("roll", 0.0))
+                        pitch = float(data.get("pitch", 0.0))
+                        yaw = float(data.get("yaw", 0.0))
+                        gyro = data.get("gyro", [0.0, 0.0, 0.0])
+                        accel = data.get("accel", [0.0, 0.0, 9.81])
 
-                    # Time-series plots
-                    rr.log("imu/orientation/roll", rr.Scalar(roll))
-                    rr.log("imu/orientation/pitch", rr.Scalar(pitch))
-                    rr.log("imu/orientation/yaw", rr.Scalar(yaw))
+                        # 3D Orientation transform for cylindrical hull
+                        quat_xyzw = euler_to_quaternion(roll, pitch, yaw)
+                        rr.log(
+                            "world/auv_hull",
+                            rr.Transform3D(
+                                rotation=rr.Quaternion(xyzw=quat_xyzw),
+                                translation=[0.0, 0.0, -1.0],  # Underwater reference depth
+                            ),
+                        )
 
-                    rr.log("imu/gyro/x", rr.Scalar(float(gyro[0])))
-                    rr.log("imu/gyro/y", rr.Scalar(float(gyro[1])))
-                    rr.log("imu/gyro/z", rr.Scalar(float(gyro[2])))
+                        # Orientation & IMU plots
+                        rr.log("imu/roll", rr_Scalar(roll))
+                        rr.log("imu/pitch", rr_Scalar(pitch))
+                        rr.log("imu/yaw", rr_Scalar(yaw))
+                        rr.log("imu/gyro/yaw_rate", rr_Scalar(float(gyro[2])))
+                        rr.log("imu/accel/forward_x", rr_Scalar(float(accel[0])))
+                        if "is_surfaced" in data:
+                            rr.log("telemetry/is_surfaced", rr_Scalar(1.0 if data["is_surfaced"] else 0.0))
+                    except Exception as e:
+                        print(f"[Visualizer] BNO log error: {e}")
 
-                    rr.log("imu/accel/x", rr.Scalar(float(accel[0])))
-                    rr.log("imu/accel/y", rr.Scalar(float(accel[1])))
-                    rr.log("imu/accel/z", rr.Scalar(float(accel[2])))
-                except Exception:
-                    pass
+                # 3. Handle Controller Commands
+                elif input_id == "control_cmd":
+                    try:
+                        raw_bytes = raw_value.to_pylist()[0]
+                        cmd = json.loads(raw_bytes if isinstance(raw_bytes, str) else raw_bytes.decode("utf-8"))
 
-            # Handle Controller Commands
-            elif input_id == "control_cmd":
-                try:
-                    raw_bytes = raw_value.to_pylist()[0]
-                    cmd = json.loads(raw_bytes if isinstance(raw_bytes, str) else raw_bytes.decode("utf-8"))
+                        rr.log("control/throttle", rr_Scalar(float(cmd.get("throttle", cmd.get("vx", 0.0)))))
+                        rr.log("control/steer_yaw", rr_Scalar(float(cmd.get("steer_yaw", cmd.get("vyaw", 0.0)))))
+                        rr.log("control/steer_pitch", rr_Scalar(float(cmd.get("steer_pitch", cmd.get("pitch", 0.0)))))
+                        rr.log("control/stick_right_x", rr_Scalar(float(cmd.get("stick_right_x", cmd.get("steer_yaw", 0.0)))))
+                        rr.log("control/stick_right_y", rr_Scalar(float(cmd.get("stick_right_y", cmd.get("steer_pitch", 0.0)))))
+                        rr.log("control/ballast_cmd", rr_Scalar(float(cmd.get("ballast", 0.0))))
+                        rr.log("control/brake", rr_Scalar(1.0 if cmd.get("brake", False) else 0.0))
+                        rr.log("control/e_stop", rr_Scalar(1.0 if cmd.get("e_stop", False) else 0.0))
+                    except Exception as e:
+                        print(f"[Visualizer] Controller log error: {e}")
 
-                    rr.log("control/cmd_vel/vx", rr.Scalar(float(cmd.get("vx", 0.0))))
-                    rr.log("control/cmd_vel/vy", rr.Scalar(float(cmd.get("vy", 0.0))))
-                    rr.log("control/cmd_vel/vyaw", rr.Scalar(float(cmd.get("vyaw", 0.0))))
-                    rr.log("control/gait_mode", rr.Scalar(int(cmd.get("gait_mode", 0))))
-                    rr.log("control/e_stop", rr.Scalar(1.0 if cmd.get("e_stop", False) else 0.0))
-                except Exception:
-                    pass
+                # 4. Handle ESP Status (TCP Health & Latency)
+                elif input_id == "esp_status":
+                    try:
+                        raw_bytes = raw_value.to_pylist()[0]
+                        status = json.loads(raw_bytes if isinstance(raw_bytes, str) else raw_bytes.decode("utf-8"))
 
-            # Handle ESP Status (TCP connection states & Latency)
-            elif input_id == "esp_status":
-                try:
-                    raw_bytes = raw_value.to_pylist()[0]
-                    status = json.loads(raw_bytes if isinstance(raw_bytes, str) else raw_bytes.decode("utf-8"))
+                        esp1_conn = 1.0 if status.get("esp1", {}).get("connected", False) else 0.0
+                        esp2_conn = 1.0 if status.get("esp2", {}).get("connected", False) else 0.0
+                        rr.log("tcp_health/esp1_connected", rr_Scalar(esp1_conn))
+                        rr.log("tcp_health/esp2_connected", rr_Scalar(esp2_conn))
+                        rr.log("tcp_health/esp1_latency_ms", rr_Scalar(float(status.get("esp1", {}).get("latency_ms", 0.0))))
+                        rr.log("tcp_health/esp2_latency_ms", rr_Scalar(float(status.get("esp2", {}).get("latency_ms", 0.0))))
+                        rr.log("status_text/esp1", rr.TextLog(f"ESP1 (Thrust/Steer): {status.get('esp1', {}).get('state', 'UNKNOWN')}"))
+                        rr.log("status_text/esp2", rr.TextLog(f"ESP2 (Ballast): {status.get('esp2', {}).get('state', 'UNKNOWN')}"))
+                    except Exception as e:
+                        print(f"[Visualizer] ESP status log error: {e}")
 
-                    esp1_conn = 1.0 if status.get("esp1", {}).get("connected", False) else 0.0
-                    esp2_conn = 1.0 if status.get("esp2", {}).get("connected", False) else 0.0
-                    esp1_rtt = float(status.get("esp1", {}).get("latency_ms", 0.0))
-                    esp2_rtt = float(status.get("esp2", {}).get("latency_ms", 0.0))
+                # 5. Handle ESP Telemetry (Sensors, Voltage, Actual Actuator feedback)
+                elif input_id == "esp_telemetry":
+                    try:
+                        raw_bytes = raw_value.to_pylist()[0]
+                        telemetry = json.loads(raw_bytes if isinstance(raw_bytes, str) else raw_bytes.decode("utf-8"))
 
-                    rr.log("tcp_status/esp1/connected", rr.Scalar(esp1_conn))
-                    rr.log("tcp_status/esp2/connected", rr.Scalar(esp2_conn))
-                    rr.log("tcp_status/esp1/latency_ms", rr.Scalar(esp1_rtt))
-                    rr.log("tcp_status/esp2/latency_ms", rr.Scalar(esp2_rtt))
-                    rr.log("status_text/esp1", rr.TextLog(f"ESP1: {status.get('esp1', {}).get('state', 'UNKNOWN')}"))
-                    rr.log("status_text/esp2", rr.TextLog(f"ESP2: {status.get('esp2', {}).get('state', 'UNKNOWN')}"))
-                except Exception:
-                    pass
+                        if "esp1" in telemetry:
+                            t1 = telemetry["esp1"]
+                            rr.log("power/esp1_voltage", rr_Scalar(float(t1.get("voltage", 12.0))))
+                            rr.log("power/esp1_current", rr_Scalar(float(t1.get("current", 0.5))))
+                        if "esp2" in telemetry:
+                            t2 = telemetry["esp2"]
+                            rr.log("power/esp2_voltage", rr_Scalar(float(t2.get("voltage", 12.0))))
+                            rr.log("power/esp2_current", rr_Scalar(float(t2.get("current", 0.5))))
+                            if "water_depth_m" in t2:
+                                rr.log("sensor/water_depth_m", rr_Scalar(float(t2["water_depth_m"])))
+                    except Exception as e:
+                        print(f"[Visualizer] ESP telemetry log error: {e}")
 
-            # Handle ESP Telemetry (UDP sensor feedback)
-            elif input_id == "esp_telemetry":
-                try:
-                    raw_bytes = raw_value.to_pylist()[0]
-                    telemetry = json.loads(raw_bytes if isinstance(raw_bytes, str) else raw_bytes.decode("utf-8"))
+                # 6. Handle Compute Status (Actuator Allocations & State Machine)
+                elif input_id == "compute_status":
+                    try:
+                        raw_bytes = raw_value.to_pylist()[0]
+                        c_status = json.loads(raw_bytes if isinstance(raw_bytes, str) else raw_bytes.decode("utf-8"))
 
-                    if "esp1" in telemetry:
-                        t1 = telemetry["esp1"]
-                        rr.log("esp1/voltage", rr.Scalar(float(t1.get("voltage", 12.0))))
-                        rr.log("esp1/current", rr.Scalar(float(t1.get("current", 0.5))))
-                    if "esp2" in telemetry:
-                        t2 = telemetry["esp2"]
-                        rr.log("esp2/voltage", rr.Scalar(float(t2.get("voltage", 12.0))))
-                        rr.log("esp2/current", rr.Scalar(float(t2.get("current", 0.5))))
-                except Exception:
-                    pass
+                        rr.log("status_text/robot_state", rr.TextLog(f"AUV State: {c_status.get('robot_state', 'UNKNOWN')}"))
+                        rr.log("actuators/bldc_thrust_pwm", rr_Scalar(float(c_status.get("throttle_pct", 0))))
 
-            # Handle Compute Status
-            elif input_id == "compute_status":
-                try:
-                    raw_bytes = raw_value.to_pylist()[0]
-                    c_status = json.loads(raw_bytes if isinstance(raw_bytes, str) else raw_bytes.decode("utf-8"))
-                    rr.log("status_text/robot_state", rr.TextLog(f"State: {c_status.get('robot_state', 'UNKNOWN')}"))
-                    rr.log("compute/dt_ms", rr.Scalar(float(c_status.get("dt_ms", 0.0))))
-                except Exception:
-                    pass
+                        # Log 4 membrane leg deployment angles (degrees)
+                        leg_angles = c_status.get("leg_deploy_angles", [0.0, 0.0, 0.0, 0.0])
+                        if len(leg_angles) >= 4:
+                            rr.log("actuators/legs/0_top_deploy_deg", rr_Scalar(float(leg_angles[0])))
+                            rr.log("actuators/legs/1_right_deploy_deg", rr_Scalar(float(leg_angles[1])))
+                            rr.log("actuators/legs/2_bottom_deploy_deg", rr_Scalar(float(leg_angles[2])))
+                            rr.log("actuators/legs/3_left_deploy_deg", rr_Scalar(float(leg_angles[3])))
+
+                        # Log head ballast intake
+                        rr.log("actuators/ballast/fill_ratio", rr_Scalar(float(c_status.get("ballast_fill_ratio", 0.5))))
+                        rr.log("actuators/ballast/servo_deg", rr_Scalar(float(c_status.get("ballast_intake_deg", 0.0))))
+                        rr.log("compute/dt_ms", rr_Scalar(float(c_status.get("dt_ms", 0.0))))
+                    except Exception as e:
+                        print(f"[Visualizer] Compute status log error: {e}")
+
+                # 7. Handle Target Balloon Relative Telemetry (Vision Estimate & Ground Truth)
+                elif input_id in ("target_relative_info", "target_relative_info_gt"):
+                    try:
+                        raw_bytes = raw_value.to_pylist()[0]
+                        target_info = json.loads(raw_bytes if isinstance(raw_bytes, str) else raw_bytes.decode("utf-8"))
+
+                        is_gt = (input_id == "target_relative_info_gt")
+                        prefix = "balloon_gt" if is_gt else "balloon_vision"
+
+                        if target_info.get("target_found", False):
+                            dist = float(target_info.get("distance_m", 0.0))
+                            az = float(target_info.get("azimuth_deg", 0.0))
+                            el = float(target_info.get("elevation_deg", 0.0))
+                            pop_cnt = int(target_info.get("pop_count", 0))
+
+                            rr.log(f"{prefix}/distance_m", rr_Scalar(dist))
+                            rr.log(f"{prefix}/azimuth_deg", rr_Scalar(az))
+                            rr.log(f"{prefix}/elevation_deg", rr_Scalar(el))
+                            # Default "balloon/" scalar plot tracks vision (or fallback to GT)
+                            rr.log("balloon/distance_m", rr_Scalar(dist))
+                            rr.log("balloon/azimuth_deg", rr_Scalar(az))
+                            rr.log("balloon/elevation_deg", rr_Scalar(el))
+
+                            if is_gt:
+                                rr.log("balloon/popped_count", rr_Scalar(pop_cnt))
+                                pos_w = target_info.get("target_pos_world", [0, 0, 0])
+                                rr.log("world/balloon_target", rr.Points3D([pos_w], radii=0.25, colors=[[255, 30, 80]]))
+
+                                all_balloons = target_info.get("all_balloons_world", [])
+                                if all_balloons:
+                                    rr.log("world/all_balloons", rr.Points3D(all_balloons, radii=0.18, colors=[[255, 120, 160]]))
+
+                                active_cnt = target_info.get("active_count", None)
+                                if active_cnt is not None:
+                                    rr.log("balloon/active_count", rr_Scalar(float(active_cnt)))
+
+                                if target_info.get("just_popped", False):
+                                    rr.log("status_text/balloon", rr.TextLog(f"*** BALLOON DESTROYED! Count: {pop_cnt} (Remaining: {active_cnt}) ***"))
+                    except Exception as e:
+                        print(f"[Visualizer] Target info log error: {e}")
+
+                # 8. Handle AI Guidance Status (Step 2 GNC Telemetry)
+                elif input_id == "guidance_status":
+                    try:
+                        raw_bytes = raw_value.to_pylist()[0]
+                        g_status = json.loads(raw_bytes if isinstance(raw_bytes, str) else raw_bytes.decode("utf-8"))
+
+                        g_mode = g_status.get("mode", "SEARCH")
+                        rr.log("status_text/guidance_mode", rr.TextLog(f"GNC Mode: {g_mode}"))
+                        rr.log("guidance/azimuth_error_deg", rr_Scalar(float(g_status.get("azimuth_err_deg", 0.0))))
+                        rr.log("guidance/elevation_error_deg", rr_Scalar(float(g_status.get("elevation_err_deg", 0.0))))
+                        rr.log("guidance/distance_m", rr_Scalar(float(g_status.get("distance_m", 0.0))))
+                        rr.log("guidance/steer_yaw", rr_Scalar(float(g_status.get("steer_yaw", 0.0))))
+                        rr.log("guidance/steer_pitch", rr_Scalar(float(g_status.get("steer_pitch", 0.0))))
+                    except Exception as e:
+                        print(f"[Visualizer] Guidance status log error: {e}")
+    except KeyboardInterrupt:
+        pass
+    finally:
+        os._exit(0)
 
 
 if __name__ == "__main__":

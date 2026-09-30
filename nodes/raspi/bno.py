@@ -1,11 +1,12 @@
 """
-Raspberry Pi BNO IMU Node
+Raspberry Pi BNO IMU Node (QuadKen Underwater AUV)
 Interfaces with BNO055 / BNO085 orientation sensor.
-Provides realistic simulated telemetry when hardware is not detected.
+Provides realistic simulated underwater motion when hardware is not detected.
 Publishes:
-  - bno_data: Roll, Pitch, Yaw, Gyro (deg/s), Accel (m/s^2), and Quaternions.
+  - bno_data: Roll, Pitch, Yaw, Gyro (deg/s), Accel (m/s^2), and Depth (m).
 """
 
+import sys
 import time
 import json
 import numpy as np
@@ -31,7 +32,7 @@ def init_hardware_bno():
         print("[BNO] BNO055 Hardware I2C initialized successfully.")
         return sensor
     except Exception as e:
-        print(f"[BNO] Hardware init failed ({e}). Using simulated BNO IMU.")
+        print(f"[BNO] Hardware init failed ({e}). Using simulated underwater BNO IMU.")
         return None
 
 
@@ -42,64 +43,74 @@ def main():
     seq = 0
     start_time = time.time()
 
-    for event in node:
-        event_type = event["type"]
-        if event_type == "STOP":
-            print("[BNO] Received STOP event. Exiting.")
-            sys.exit(0)
+    try:
+        for event in node:
+            event_type = event["type"]
+            if event_type == "STOP":
+                print("[BNO] Received STOP event. Exiting.")
+                break
 
-        if event_type == "INPUT":
-            # Driven by timer tick (e.g. dora/timer/millis/20 = 50Hz)
-            seq += 1
-            now = time.time()
-            t = now - start_time
+            if event_type == "INPUT":
+                seq += 1
+                now = time.time()
+                t = now - start_time
 
-            if bno_sensor is not None:
-                try:
-                    euler = bno_sensor.euler or (0.0, 0.0, 0.0)
-                    gyro = bno_sensor.gyro or (0.0, 0.0, 0.0)
-                    accel = bno_sensor.linear_acceleration or (0.0, 0.0, 9.81)
-                    quat = bno_sensor.quaternion or (1.0, 0.0, 0.0, 0.0)
+                if bno_sensor is not None:
+                    try:
+                        euler = bno_sensor.euler
+                        gyro = bno_sensor.gyro
+                        accel = bno_sensor.acceleration
+                        quat = bno_sensor.quaternion
 
-                    yaw, roll, pitch = euler[0], euler[1], euler[2]
-                    gx, gy, gz = gyro[0], gyro[1], gyro[2]
-                    ax, ay, az = accel[0], accel[1], accel[2]
-                    qw, qx, qy, qz = quat[0], quat[1], quat[2], quat[3]
-                except Exception:
-                    # Sensor read glitch fallback
-                    yaw, roll, pitch = 0.0, 0.0, 0.0
-                    gx, gy, gz = 0.0, 0.0, 0.0
-                    ax, ay, az = 0.0, 0.0, 9.81
-                    qw, qx, qy, qz = 1.0, 0.0, 0.0, 0.0
-            else:
-                # Simulated quadruped body sway and vibration
-                roll = 3.0 * np.sin(2.0 * np.pi * 0.8 * t)
-                pitch = 2.0 * np.cos(2.0 * np.pi * 0.8 * t)
-                yaw = (t * 5.0) % 360.0
+                        yaw = float(euler[0]) if euler[0] is not None else 0.0
+                        roll = float(euler[1]) if euler[1] is not None else 0.0
+                        pitch = float(euler[2]) if euler[2] is not None else 0.0
 
-                gx = 0.8 * np.cos(2.0 * np.pi * 0.8 * t)
-                gy = -0.6 * np.sin(2.0 * np.pi * 0.8 * t)
-                gz = 0.1 * np.random.randn()
+                        gyro_data = [float(g) if g is not None else 0.0 for g in gyro]
+                        accel_data = [float(a) if a is not None else 0.0 for a in accel]
+                        depth_m = 1.5
+                    except Exception:
+                        bno_sensor = None
+                        yaw, roll, pitch = 0.0, 0.0, 0.0
+                        gyro_data = [0.0, 0.0, 0.0]
+                        accel_data = [0.0, 0.0, 9.81]
+                        depth_m = 1.5
+                else:
+                    # Simulated smooth underwater hydrodynamic motion
+                    # Natural pitch oscillation and gentle roll swaying from water current
+                    pitch = float(3.0 * np.sin(0.4 * t) - 1.0 * np.sin(0.8 * t))
+                    roll = float(1.5 * np.cos(0.5 * t))
+                    yaw = float((t * 5.0) % 360.0 - 180.0)
 
-                ax = 0.2 * np.sin(2.0 * np.pi * 1.6 * t) + 0.05 * np.random.randn()
-                ay = 0.2 * np.cos(2.0 * np.pi * 1.6 * t) + 0.05 * np.random.randn()
-                az = 9.81 + 0.5 * np.sin(2.0 * np.pi * 1.6 * t)
+                    gyro_data = [
+                        round(float(0.8 * np.sin(0.5 * t)), 2),
+                        round(float(1.2 * np.cos(0.4 * t)), 2),
+                        round(float(5.0), 2),
+                    ]
+                    accel_data = [
+                        round(float(0.2 * np.sin(0.3 * t)), 2),
+                        round(float(0.1 * np.cos(0.4 * t)), 2),
+                        round(float(9.81 + 0.1 * np.sin(0.2 * t)), 2),
+                    ]
+                    # Simulated depth oscillating around 1.8m
+                    depth_m = round(float(1.8 + 0.3 * np.sin(0.2 * t)), 2)
 
-                qw, qx, qy, qz = 1.0, 0.0, 0.0, 0.0
+                payload = {
+                    "seq": seq,
+                    "timestamp": now,
+                    "roll": round(roll, 2),
+                    "pitch": round(pitch, 2),
+                    "yaw": round(yaw, 2),
+                    "gyro": gyro_data,
+                    "accel": accel_data,
+                    "depth_m": depth_m,
+                }
 
-            payload = {
-                "seq": seq,
-                "timestamp": now,
-                "roll": round(float(roll), 2),
-                "pitch": round(float(pitch), 2),
-                "yaw": round(float(yaw), 2),
-                "gyro": [round(float(gx), 3), round(float(gy), 3), round(float(gz), 3)],
-                "accel": [round(float(ax), 3), round(float(ay), 3), round(float(az), 3)],
-                "quaternion": [round(float(qw), 4), round(float(qx), 4), round(float(qy), 4), round(float(qz), 4)],
-            }
-
-            payload_bytes = json.dumps(payload).encode("utf-8")
-            node.send_output("bno_data", pa.array([payload_bytes]))
+                node.send_output("bno_data", pa.array([json.dumps(payload).encode("utf-8")]))
+    except KeyboardInterrupt:
+        pass
+    finally:
+        sys.exit(0)
 
 
 if __name__ == "__main__":

@@ -13,7 +13,7 @@ Start-Sleep -Seconds 1
 # 2. Run Dora Dataflow
 Write-Host "[2/2] Launching Dora Dataflow..." -ForegroundColor Green
 try {
-    uv run dora run dataflow_local.yml --uv
+    uv run dora run dataflow_local.yml --uv --log-filter "camera=error"
 } finally {
     Write-Host "`nStopping ESP Simulator..." -ForegroundColor Yellow
     if ($espProcess -and -not $espProcess.HasExited) {

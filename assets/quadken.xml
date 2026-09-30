@@ -1,0 +1,409 @@
+<mujoco model="quadken_auv">
+  <!--
+    QuadKen AUV (Autonomous Underwater Vehicle)
+    Specifications:
+      - Main Cylindrical Hull: Diameter 0.24m (radius 0.12m), Length 0.70m, Weight ~8.0kg
+      - 4 Legs: Length 0.30m, Opening angle 0-90 degrees (Inner to Outer deployment)
+      - Direct Degree Control: Actuators operate directly on 0 to 90 degrees!
+      - 4 Inter-leg Deformable Membranes (Skins) connecting adjacent legs like an umbrella/webbing
+      - Dual BLDC Thrusters: Diameter 0.04m, tandem in-line inside the 4 legs, counter-rotating to cancel torque
+      - Head Ballast System: 4 water-intake servos at the front dome
+      - Net Positive Buoyancy: Slight positive buoyancy (~+0.3kgf) with nose-up pitch trim
+      - Full 3D Roll / Pitch / Yaw rotation
+  -->
+
+  <compiler angle="degree" coordinate="local" inertiafromgeom="auto"/>
+
+  <option density="1000" viscosity="0.001" gravity="0 0 -9.81" integrator="implicitfast" timestep="0.005">
+    <flag contact="enable" energy="enable"/>
+  </option>
+
+  <visual>
+    <global offwidth="1920" offheight="1080"/>
+    <quality shadowsize="2048"/>
+  </visual>
+
+  <default>
+    <joint damping="0.8" armature="0.01"/>
+    <geom condim="3" friction="0.8 0.1 0.1"/>
+    <!-- Default for Leg joints: Opens 0 to 90 deg from inner to outer -->
+    <default class="leg_joint">
+      <joint type="hinge" limited="true" range="0 90" damping="0.6" stiffness="0.1"/>
+    </default>
+    <!-- Default for Servo Actuators: Direct 0 to 90 Degree control -->
+    <!-- Gain 0.5 N*m/deg, bias scales rad to deg seamlessly -->
+    <!-- Realistic high-torque underwater servo: 8.0 N*m max torque for swift, responsive deployment -->
+    <default class="servo_actuator">
+      <general dyntype="none" biastype="affine" gainprm="0.5 0 0" biasprm="0 -28.64789 -0.05"
+               ctrlrange="0 90" forcelimited="true" forcerange="-8.0 8.0"/>
+    </default>
+  </default>
+
+  <asset>
+    <!-- Pool environment visuals -->
+    <texture type="skybox" builtin="gradient" rgb1="0.15 0.45 0.65" rgb2="0.05 0.15 0.25" width="512" height="512"/>
+    <texture name="pool_floor_tex" type="2d" builtin="checker" rgb1="0.12 0.52 0.72" rgb2="0.16 0.62 0.82" width="256" height="256"/>
+    <material name="pool_floor_mat" texture="pool_floor_tex" texrepeat="72 42" reflectance="0.15" shininess="0.8"/>
+    <texture name="pool_wall_tex" type="2d" builtin="checker" rgb1="0.82 0.90 0.96" rgb2="0.72 0.82 0.90" width="256" height="256"/>
+    <material name="pool_wall_mat" texture="pool_wall_tex" texrepeat="48 8" reflectance="0.2" shininess="0.7"/>
+    <material name="pool_deck_mat" rgba="0.92 0.93 0.94 1.0" shininess="0.4"/>
+    <material name="water_surface_mat" rgba="0.1 0.45 0.7 0.35" specular="0.8" shininess="0.9"/>
+    <material name="lane_marker_mat" rgba="0.05 0.22 0.45 0.95"/>
+
+    <!-- Robot materials -->
+    <material name="hull_mat" rgba="0.75 0.80 0.85 1.0" shininess="0.8" specular="0.6"/>
+    <material name="frame_mat" rgba="0.25 0.28 0.32 1.0" shininess="0.5"/>
+    <material name="intake_mat" rgba="0.15 0.18 0.20 1.0"/>
+    <material name="leg_mat" rgba="0.30 0.35 0.40 1.0" shininess="0.6"/>
+    <material name="thruster_mat" rgba="0.1 0.1 0.1 1.0" shininess="0.9"/>
+    <material name="propeller_cw" rgba="0.1 0.6 0.8 0.9"/>
+    <material name="propeller_ccw" rgba="0.8 0.4 0.1 0.9"/>
+    <!-- Translucent flexible inter-leg membrane -->
+    <material name="membrane_mat" rgba="0.80 0.92 1.0 0.55" shininess="0.9" specular="0.8"/>
+
+    <!-- Target Underwater Balloon Materials (Vibrant Palette & Translucent Rubber) -->
+    <material name="balloon_mat" rgba="1.0 0.12 0.38 0.90" shininess="0.9" specular="0.9"/>
+    <material name="balloon_mat_red" rgba="1.0 0.12 0.38 0.90" shininess="0.9" specular="0.9"/>
+    <material name="balloon_mat_orange" rgba="1.0 0.45 0.10 0.90" shininess="0.9" specular="0.9"/>
+    <material name="balloon_mat_yellow" rgba="1.0 0.82 0.12 0.90" shininess="0.9" specular="0.9"/>
+    <material name="balloon_mat_green" rgba="0.10 0.85 0.35 0.90" shininess="0.9" specular="0.9"/>
+    <material name="balloon_mat_cyan" rgba="0.10 0.80 0.95 0.90" shininess="0.9" specular="0.9"/>
+    <material name="balloon_mat_blue" rgba="0.20 0.45 1.0 0.90" shininess="0.9" specular="0.9"/>
+    <material name="balloon_mat_purple" rgba="0.70 0.20 0.95 0.90" shininess="0.9" specular="0.9"/>
+    <material name="balloon_mat_pink" rgba="1.0 0.28 0.70 0.90" shininess="0.9" specular="0.9"/>
+    <material name="balloon_mat_lime" rgba="0.65 0.95 0.15 0.90" shininess="0.9" specular="0.9"/>
+    <material name="balloon_mat_gold" rgba="1.0 0.70 0.10 0.90" shininess="0.9" specular="0.9"/>
+    <material name="balloon_tether_mat" rgba="0.85 0.85 0.85 0.5"/>
+  </asset>
+
+  <worldbody>
+    <light directional="true" pos="12.0 0 16" dir="0 0 -1" diffuse="0.85 0.9 0.95" specular="0.3 0.3 0.3"/>
+    <light directional="false" pos="5.0 0 4" diffuse="0.35 0.55 0.65"/>
+    <light directional="false" pos="20.0 0 4" diffuse="0.35 0.55 0.65"/>
+
+    <!-- ============================================================ -->
+    <!-- POOL SANDBOX ARENA (9x Area: 36m Length x 21m Width x 4m Depth) -->
+    <!-- Center: X=12.0m, Y=0.0m | Floor at Z=-4.0m, Surface at Z=0.0m -->
+    <!-- ============================================================ -->
+    <!-- Pool Floor (Z = -4.0m) -->
+    <geom name="pool_floor" type="box" pos="12.0 0 -4.05" size="18.0 10.5 0.05" material="pool_floor_mat"/>
+
+    <!-- 5 Swimming Lane Lines on Floor (Lanes: Y=-6, -3, 0, +3, +6) -->
+    <geom name="lane_marker_center" type="box" pos="12.0 0 -3.99" size="17.0 0.15 0.005" material="lane_marker_mat"/>
+    <geom name="lane_marker_left_1" type="box" pos="12.0 3.5 -3.99" size="17.0 0.15 0.005" material="lane_marker_mat"/>
+    <geom name="lane_marker_right_1" type="box" pos="12.0 -3.5 -3.99" size="17.0 0.15 0.005" material="lane_marker_mat"/>
+    <geom name="lane_marker_left_2" type="box" pos="12.0 7.0 -3.99" size="17.0 0.15 0.005" material="lane_marker_mat"/>
+    <geom name="lane_marker_right_2" type="box" pos="12.0 -7.0 -3.99" size="17.0 0.15 0.005" material="lane_marker_mat"/>
+
+    <!-- Cross marks at lane ends -->
+    <geom name="lane_cross_front" type="box" pos="28.0 0 -3.99" size="0.15 0.8 0.005" material="lane_marker_mat"/>
+    <geom name="lane_cross_back" type="box" pos="-4.0 0 -3.99" size="0.15 0.8 0.005" material="lane_marker_mat"/>
+
+    <!-- 4 Surrounding Pool Enclosure Walls (Boxed Sandbox Arena) -->
+    <!-- Front Wall (+X at X = +30.0m) -->
+    <geom name="pool_wall_front" type="box" pos="30.05 0 -1.75" size="0.05 10.5 2.25" material="pool_wall_mat"/>
+    <!-- Back Wall (-X at X = -6.0m) -->
+    <geom name="pool_wall_back" type="box" pos="-6.05 0 -1.75" size="0.05 10.5 2.25" material="pool_wall_mat"/>
+    <!-- Left Wall (+Y at Y = +10.5m) -->
+    <geom name="pool_wall_left" type="box" pos="12.0 10.55 -1.75" size="18.05 0.05 2.25" material="pool_wall_mat"/>
+    <!-- Right Wall (-Y at Y = -10.5m) -->
+    <geom name="pool_wall_right" type="box" pos="12.0 -10.55 -1.75" size="18.05 0.05 2.25" material="pool_wall_mat"/>
+
+    <!-- Pool Deck / Exterior Rim Borders at Z = 0.0m -->
+    <geom name="pool_deck_front" type="box" pos="32.5 0 0.05" size="2.5 13.5 0.05" material="pool_deck_mat"/>
+    <geom name="pool_deck_back" type="box" pos="-8.5 0 0.05" size="2.5 13.5 0.05" material="pool_deck_mat"/>
+    <geom name="pool_deck_left" type="box" pos="12.0 12.0 0.05" size="18.1 1.5 0.05" material="pool_deck_mat"/>
+    <geom name="pool_deck_right" type="box" pos="12.0 -12.0 0.05" size="18.1 1.5 0.05" material="pool_deck_mat"/>
+
+    <!-- Water Surface (Translucent, level at Z = 0.0m) -->
+    <geom name="water_surface" type="box" pos="12.0 0 0.0" size="18.0 10.5 0.005" material="water_surface_mat" contype="0" conaffinity="0"/>
+
+    <!-- ============================================================ -->
+    <!-- TARGET UNDERWATER BALLOONS (10 Mocap bodies distributed in pool) -->
+    <!-- Floor at Z = -4.0m; tethers extend from -0.30m to floor (-4.0 - Z)m -->
+    <!-- ============================================================ -->
+    <!-- Balloon 0: Initial Front Target (Ruby Red) -->
+    <body name="balloon_0" pos="5.0 0.5 -1.8" mocap="true">
+      <geom name="balloon_0_geom" type="sphere" size="0.25" material="balloon_mat_red"/>
+      <geom name="balloon_0_knot" type="cylinder" fromto="0 0 -0.25  0 0 -0.30" size="0.02" material="balloon_mat_red"/>
+      <geom name="balloon_0_tether" type="cylinder" fromto="0 0 -0.30  0 0 -2.20" size="0.005" material="balloon_tether_mat"/>
+    </body>
+
+    <!-- Balloon 1: Right Forward (Tangerine Orange) -->
+    <body name="balloon_1" pos="10.0 -2.5 -2.0" mocap="true">
+      <geom name="balloon_1_geom" type="sphere" size="0.25" material="balloon_mat_orange"/>
+      <geom name="balloon_1_knot" type="cylinder" fromto="0 0 -0.25  0 0 -0.30" size="0.02" material="balloon_mat_orange"/>
+      <geom name="balloon_1_tether" type="cylinder" fromto="0 0 -0.30  0 0 -2.00" size="0.005" material="balloon_tether_mat"/>
+    </body>
+
+    <!-- Balloon 2: Left Mid (Sun Yellow) -->
+    <body name="balloon_2" pos="14.0 3.0 -1.6" mocap="true">
+      <geom name="balloon_2_geom" type="sphere" size="0.25" material="balloon_mat_yellow"/>
+      <geom name="balloon_2_knot" type="cylinder" fromto="0 0 -0.25  0 0 -0.30" size="0.02" material="balloon_mat_yellow"/>
+      <geom name="balloon_2_tether" type="cylinder" fromto="0 0 -0.30  0 0 -2.40" size="0.005" material="balloon_tether_mat"/>
+    </body>
+
+    <!-- Balloon 3: Right Mid-Back (Emerald Green) -->
+    <body name="balloon_3" pos="18.0 -4.0 -2.2" mocap="true">
+      <geom name="balloon_3_geom" type="sphere" size="0.25" material="balloon_mat_green"/>
+      <geom name="balloon_3_knot" type="cylinder" fromto="0 0 -0.25  0 0 -0.30" size="0.02" material="balloon_mat_green"/>
+      <geom name="balloon_3_tether" type="cylinder" fromto="0 0 -0.30  0 0 -1.80" size="0.005" material="balloon_tether_mat"/>
+    </body>
+
+    <!-- Balloon 4: Center Far (Aqua Cyan) -->
+    <body name="balloon_4" pos="22.0 1.0 -1.7" mocap="true">
+      <geom name="balloon_4_geom" type="sphere" size="0.25" material="balloon_mat_cyan"/>
+      <geom name="balloon_4_knot" type="cylinder" fromto="0 0 -0.25  0 0 -0.30" size="0.02" material="balloon_mat_cyan"/>
+      <geom name="balloon_4_tether" type="cylinder" fromto="0 0 -0.30  0 0 -2.30" size="0.005" material="balloon_tether_mat"/>
+    </body>
+
+    <!-- Balloon 5: Far Right Deep (Ocean Blue) -->
+    <body name="balloon_5" pos="26.0 -2.5 -2.4" mocap="true">
+      <geom name="balloon_5_geom" type="sphere" size="0.25" material="balloon_mat_blue"/>
+      <geom name="balloon_5_knot" type="cylinder" fromto="0 0 -0.25  0 0 -0.30" size="0.02" material="balloon_mat_blue"/>
+      <geom name="balloon_5_tether" type="cylinder" fromto="0 0 -0.30  0 0 -1.60" size="0.005" material="balloon_tether_mat"/>
+    </body>
+
+    <!-- Balloon 6: Far Left Shallow (Violet Purple) -->
+    <body name="balloon_6" pos="25.0 4.0 -1.5" mocap="true">
+      <geom name="balloon_6_geom" type="sphere" size="0.25" material="balloon_mat_purple"/>
+      <geom name="balloon_6_knot" type="cylinder" fromto="0 0 -0.25  0 0 -0.30" size="0.02" material="balloon_mat_purple"/>
+      <geom name="balloon_6_tether" type="cylinder" fromto="0 0 -0.30  0 0 -2.50" size="0.005" material="balloon_tether_mat"/>
+    </body>
+
+    <!-- Balloon 7: Mid Left Far (Hot Pink) -->
+    <body name="balloon_7" pos="19.0 5.5 -2.1" mocap="true">
+      <geom name="balloon_7_geom" type="sphere" size="0.25" material="balloon_mat_pink"/>
+      <geom name="balloon_7_knot" type="cylinder" fromto="0 0 -0.25  0 0 -0.30" size="0.02" material="balloon_mat_pink"/>
+      <geom name="balloon_7_tether" type="cylinder" fromto="0 0 -0.30  0 0 -1.90" size="0.005" material="balloon_tether_mat"/>
+    </body>
+
+    <!-- Balloon 8: Right Mid-Front (Lime Green) -->
+    <body name="balloon_8" pos="11.0 -5.0 -1.8" mocap="true">
+      <geom name="balloon_8_geom" type="sphere" size="0.25" material="balloon_mat_lime"/>
+      <geom name="balloon_8_knot" type="cylinder" fromto="0 0 -0.25  0 0 -0.30" size="0.02" material="balloon_mat_lime"/>
+      <geom name="balloon_8_tether" type="cylinder" fromto="0 0 -0.30  0 0 -2.20" size="0.005" material="balloon_tether_mat"/>
+    </body>
+
+    <!-- Balloon 9: Left Forward Deep (Amber Gold) -->
+    <body name="balloon_9" pos="7.0 3.5 -2.3" mocap="true">
+      <geom name="balloon_9_geom" type="sphere" size="0.25" material="balloon_mat_gold"/>
+      <geom name="balloon_9_knot" type="cylinder" fromto="0 0 -0.25  0 0 -0.30" size="0.02" material="balloon_mat_gold"/>
+      <geom name="balloon_9_tether" type="cylinder" fromto="0 0 -0.30  0 0 -1.70" size="0.005" material="balloon_tether_mat"/>
+    </body>
+
+    <!-- ============================================================ -->
+    <!-- QUADKEN AUV ROBOT ROOT                                      -->
+    <!-- Submerged at Z = -1.5m, free 6-DOF (Roll / Pitch / Yaw)     -->
+    <!-- ============================================================ -->
+    <body name="auv" pos="0 0 -1.5">
+      <!-- 6-DOF Free movement in water -->
+      <freejoint name="root"/>
+
+      <!--
+        Mass & Inertia Balance:
+        Total weight: 8.0 kg (Gravity = 78.48 N)
+        Target Buoyancy: ~8.3 kgf = 81.42 N (Net +2.94 N upward when empty)
+        Center of Gravity (CoG): Positioned towards aft on centerline (X=0.26, Y=0, Z=0.0)
+        Center of Buoyancy (CoB): Positioned forward on centerline (X=0.48, Y=0, Z=0.0)
+        -> Longitudinal offset (not vertical) naturally produces nose-up pitch trim when empty!
+        Hydrodynamic Added Inertia: Water surrounding cylindrical hull roughly doubles pitch/yaw virtual inertia.
+      -->
+      <inertial pos="0.26 0 0" mass="6.8" diaginertia="0.18 0.75 0.75"/>
+
+      <!-- ========================================== -->
+      <!-- 1. MAIN CYLINDRICAL BODY (Diameter 24cm, Length 70cm) -->
+      <!-- From X=0.00 (Aft rim) to X=0.70 (Nose base) -->
+      <!-- ========================================== -->
+      <geom name="hull_cylinder" type="cylinder" fromto="0 0 0  0.70 0 0" size="0.12" material="hull_mat" density="250"/>
+      <!-- Nose Dome (Front Hemisphere, R=0.12m at X=0.70) -->
+      <geom name="nose_dome" type="sphere" pos="0.70 0 0" size="0.12" material="hull_mat" density="200"/>
+      <!-- Aft Endcap Rim -->
+      <geom name="aft_rim" type="cylinder" fromto="-0.01 0 0  0.01 0 0" size="0.122" material="frame_mat" mass="0.4"/>
+
+      <!-- Head Water-Intake Ports (4 Slits at Nose for ESP2 Ballast) -->
+      <geom name="intake_top" type="box" pos="0.74 0 0.08" size="0.02 0.03 0.008" material="intake_mat" mass="0.01"/>
+      <geom name="intake_right" type="box" pos="0.74 -0.08 0" size="0.02 0.008 0.03" material="intake_mat" mass="0.01"/>
+      <geom name="intake_bottom" type="box" pos="0.74 0 -0.08" size="0.02 0.03 0.008" material="intake_mat" mass="0.01"/>
+      <geom name="intake_left" type="box" pos="0.74 0.08 0" size="0.02 0.008 0.03" material="intake_mat" mass="0.01"/>
+
+      <!-- Internal Buoyancy Foam Block (Center of Buoyancy forward at X=0.35..0.65, Z=0.0) -->
+      <geom name="buoyancy_pod" type="capsule" fromto="0.35 0 0  0.65 0 0" size="0.08" rgba="0.1 0.8 0.2 0.0" mass="0.1"/>
+
+      <!-- Nose Ballast Chamber Site (Where intake water adds weight at X=0.65, Y=0, Z=0) -->
+      <site name="ballast_tank" pos="0.65 0 0" size="0.02" rgba="0 0.5 1 0.6"/>
+
+      <!-- Sensors Site inside Hull -->
+      <site name="imu_site" pos="0.35 0 0" size="0.02" rgba="1 0 0 1"/>
+      <site name="depth_sensor_site" pos="0.68 0 -0.08" size="0.01" rgba="0 1 1 1"/>
+
+      <!-- Underwater Cameras -->
+      <geom name="camera_lens" type="sphere" pos="0.81 0 0" size="0.03" rgba="0.1 0.1 0.2 0.8" mass="0.01"/>
+      <camera name="front_camera" pos="0.82 0 0" xyaxes="0 -1 0 0 0 1" fovy="75"/>
+      <!-- Third-person Overhead Chase Camera (View from aft-top looking down-forward at body & legs) -->
+      <camera name="overhead_camera" pos="-1.1 0 0.55" xyaxes="0 -1 0 0.382 0 0.924" fovy="65"/>
+      <!-- Direct Top-Down Bird's-Eye Camera -->
+      <camera name="topdown_camera" pos="0.35 0 1.6" xyaxes="0 -1 0 1 0 0" fovy="65"/>
+
+      <!-- ========================================== -->
+      <!-- 2. BLDC THRUSTERS (Dual Tandem, Inside 4 Legs) -->
+      <!-- Diameter 4cm (radius 0.02m), in-line along central axis -->
+      <!-- ========================================== -->
+      <!-- Forward Thruster 1 (Front/CW) -->
+      <geom name="thruster_shroud_1" type="cylinder" fromto="-0.03 0 0  -0.08 0 0" size="0.02" material="thruster_mat" mass="0.15"/>
+      <geom name="propeller_1" type="cylinder" fromto="-0.05 0 0  -0.06 0 0" size="0.019" material="propeller_cw" mass="0.03"/>
+      <site name="thrust_site_1" pos="-0.05 0 0" size="0.015" rgba="0 1 0 1"/>
+
+      <!-- Forward Thruster 2 (Aft/CCW, Counter-Rotating to cancel torque) -->
+      <geom name="thruster_shroud_2" type="cylinder" fromto="-0.12 0 0  -0.17 0 0" size="0.02" material="thruster_mat" mass="0.15"/>
+      <geom name="propeller_2" type="cylinder" fromto="-0.14 0 0  -0.15 0 0" size="0.019" material="propeller_ccw" mass="0.03"/>
+      <site name="thrust_site_2" pos="-0.14 0 0" size="0.015" rgba="1 0.5 0 1"/>
+
+      <!-- Central Support Stator Rod holding thrusters to aft rim -->
+      <geom name="thruster_shaft" type="cylinder" fromto="0 0 0  -0.20 0 0" size="0.008" material="frame_mat" mass="0.1"/>
+
+      <!-- ========================================== -->
+      <!-- 3. FOUR CLEAN STRUT LEGS (ESP1)            -->
+      <!-- Mounted on Aft Rim (X=0, R=0.12m), Length 30cm -->
+      <!-- Hinges open radially from INNER to OUTER (0 to 90 deg) -->
+      <!-- ========================================== -->
+
+      <!-- LEG 0: TOP (pos: 0, 0, +0.12m) -->
+      <!-- axis="0 1 0" rotates from -X towards +Z (Opens outward/upward) -->
+      <body name="leg_top" pos="0 0 0.12">
+        <joint name="joint_leg_top" class="leg_joint" pos="0 0 0" axis="0 1 0"/>
+        <geom name="strut_top" type="capsule" fromto="0 0 0  -0.30 0 0" size="0.012" material="leg_mat" mass="0.14"/>
+        <geom name="tip_top" type="sphere" pos="-0.30 0 0" size="0.014" material="frame_mat" mass="0.02"/>
+      </body>
+
+      <!-- LEG 1: RIGHT (pos: 0, -0.12m, 0) -->
+      <!-- axis="0 0 1" rotates from -X towards -Y (Opens outward/rightward) -->
+      <body name="leg_right" pos="0 -0.12 0">
+        <joint name="joint_leg_right" class="leg_joint" pos="0 0 0" axis="0 0 1"/>
+        <geom name="strut_right" type="capsule" fromto="0 0 0  -0.30 0 0" size="0.012" material="leg_mat" mass="0.14"/>
+        <geom name="tip_right" type="sphere" pos="-0.30 0 0" size="0.014" material="frame_mat" mass="0.02"/>
+      </body>
+
+      <!-- LEG 2: BOTTOM (pos: 0, 0, -0.12m) -->
+      <!-- axis="0 -1 0" rotates from -X towards -Z (Opens outward/downward) -->
+      <body name="leg_bottom" pos="0 0 -0.12">
+        <joint name="joint_leg_bottom" class="leg_joint" pos="0 0 0" axis="0 -1 0"/>
+        <geom name="strut_bottom" type="capsule" fromto="0 0 0  -0.30 0 0" size="0.012" material="leg_mat" mass="0.14"/>
+        <geom name="tip_bottom" type="sphere" pos="-0.30 0 0" size="0.014" material="frame_mat" mass="0.02"/>
+      </body>
+
+      <!-- LEG 3: LEFT (pos: 0, +0.12m, 0) -->
+      <!-- axis="0 0 -1" rotates from -X towards +Y (Opens outward/leftward) -->
+      <body name="leg_left" pos="0 0.12 0">
+        <joint name="joint_leg_left" class="leg_joint" pos="0 0 0" axis="0 0 -1"/>
+        <geom name="strut_left" type="capsule" fromto="0 0 0  -0.30 0 0" size="0.012" material="leg_mat" mass="0.14"/>
+        <geom name="tip_left" type="sphere" pos="-0.30 0 0" size="0.014" material="frame_mat" mass="0.02"/>
+      </body>
+
+      <!-- ========================================== -->
+      <!-- 4. HEAD BALLAST WATER-INTAKE SERVOS (ESP2) -->
+      <!-- 4 rotational valve cylinders at nose       -->
+      <!-- ========================================== -->
+      <body name="ballast_valve_1" pos="0.65 0 0.07">
+        <joint name="joint_ballast_1" class="leg_joint" axis="0 1 0"/>
+        <geom name="geom_ballast_1" type="cylinder" fromto="0 -0.015 0  0 0.015 0" size="0.015" material="intake_mat" mass="0.03"/>
+      </body>
+      <body name="ballast_valve_2" pos="0.65 -0.07 0">
+        <joint name="joint_ballast_2" class="leg_joint" axis="0 0 1"/>
+        <geom name="geom_ballast_2" type="cylinder" fromto="0 0 -0.015  0 0 0.015" size="0.015" material="intake_mat" mass="0.03"/>
+      </body>
+      <body name="ballast_valve_3" pos="0.65 0 -0.07">
+        <joint name="joint_ballast_3" class="leg_joint" axis="0 -1 0"/>
+        <geom name="geom_ballast_3" type="cylinder" fromto="0 -0.015 0  0 0.015 0" size="0.015" material="intake_mat" mass="0.03"/>
+      </body>
+      <body name="ballast_valve_4" pos="0.65 0.07 0">
+        <joint name="joint_ballast_4" class="leg_joint" axis="0 0 -1"/>
+        <geom name="geom_ballast_4" type="cylinder" fromto="0 0 -0.015  0 0 0.015" size="0.015" material="intake_mat" mass="0.03"/>
+      </body>
+
+    </body>
+  </worldbody>
+
+  <!-- ============================================================ -->
+  <!-- DEFORMABLE SKINS: MEMBRANES CONNECTING ADJACENT LEGS        -->
+  <!-- 4 translucent skins stretch between neighboring legs like an umbrella -->
+  <!-- ============================================================ -->
+  <deformable>
+    <!-- 1. Membrane between Leg TOP and Leg RIGHT -->
+    <!-- Vertices: [0: Top Root, 1: Top Tip, 2: Right Tip, 3: Right Root] -->
+    <skin name="membrane_top_right"
+          vertex="0 0 0.12   -0.30 0 0.12   -0.30 -0.12 0   0 -0.12 0"
+          face="0 1 2   0 2 3"
+          material="membrane_mat">
+      <bone body="leg_top"   bindpos="0 0 0.12"  bindquat="1 0 0 0" vertid="0 1" vertweight="1.0 1.0"/>
+      <bone body="leg_right" bindpos="0 -0.12 0" bindquat="1 0 0 0" vertid="3 2" vertweight="1.0 1.0"/>
+    </skin>
+
+    <!-- 2. Membrane between Leg RIGHT and Leg BOTTOM -->
+    <!-- Vertices: [0: Right Root, 1: Right Tip, 2: Bottom Tip, 3: Bottom Root] -->
+    <skin name="membrane_right_bottom"
+          vertex="0 -0.12 0   -0.30 -0.12 0   -0.30 0 -0.12   0 0 -0.12"
+          face="0 1 2   0 2 3"
+          material="membrane_mat">
+      <bone body="leg_right"  bindpos="0 -0.12 0" bindquat="1 0 0 0" vertid="0 1" vertweight="1.0 1.0"/>
+      <bone body="leg_bottom" bindpos="0 0 -0.12" bindquat="1 0 0 0" vertid="3 2" vertweight="1.0 1.0"/>
+    </skin>
+
+    <!-- 3. Membrane between Leg BOTTOM and Leg LEFT -->
+    <!-- Vertices: [0: Bottom Root, 1: Bottom Tip, 2: Left Tip, 3: Left Root] -->
+    <skin name="membrane_bottom_left"
+          vertex="0 0 -0.12   -0.30 0 -0.12   -0.30 0.12 0   0 0.12 0"
+          face="0 1 2   0 2 3"
+          material="membrane_mat">
+      <bone body="leg_bottom" bindpos="0 0 -0.12" bindquat="1 0 0 0" vertid="0 1" vertweight="1.0 1.0"/>
+      <bone body="leg_left"   bindpos="0 0.12 0"  bindquat="1 0 0 0" vertid="3 2" vertweight="1.0 1.0"/>
+    </skin>
+
+    <!-- 4. Membrane between Leg LEFT and Leg TOP -->
+    <!-- Vertices: [0: Left Root, 1: Left Tip, 2: Top Tip, 3: Top Root] -->
+    <skin name="membrane_left_top"
+          vertex="0 0.12 0   -0.30 0.12 0   -0.30 0 0.12   0 0 0.12"
+          face="0 1 2   0 2 3"
+          material="membrane_mat">
+      <bone body="leg_left" bindpos="0 0.12 0" bindquat="1 0 0 0" vertid="0 1" vertweight="1.0 1.0"/>
+      <bone body="leg_top"  bindpos="0 0 0.12" bindquat="1 0 0 0" vertid="3 2" vertweight="1.0 1.0"/>
+    </skin>
+  </deformable>
+
+  <!-- ============================================================ -->
+  <!-- ACTUATORS DEFINITION                                         -->
+  <!-- Matching QuadKen Dora Architecture (ESP1 + ESP2)             -->
+  <!-- Control inputs are directly in DEGREES [0 to 90]!            -->
+  <!-- ============================================================ -->
+  <actuator>
+    <!-- ===== ESP1: THRUST & DRAG-STEERING UNIT ===== -->
+    <!-- 2x Forward BLDC Thrusters (Tandem In-Line, Counter-Rotating) -->
+    <motor name="bldc_thruster_1" site="thrust_site_1" gear="1.0 0 0  0.02 0 0" ctrllimited="true" ctrlrange="0 400"/>
+    <motor name="bldc_thruster_2" site="thrust_site_2" gear="1.0 0 0 -0.02 0 0" ctrllimited="true" ctrlrange="0 400"/>
+
+    <!-- 4x Membrane Leg Deployment Servos (Direct 0 to 90 degrees!) -->
+    <general name="leg_servo_top" joint="joint_leg_top" class="servo_actuator"/>
+    <general name="leg_servo_right" joint="joint_leg_right" class="servo_actuator"/>
+    <general name="leg_servo_bottom" joint="joint_leg_bottom" class="servo_actuator"/>
+    <general name="leg_servo_left" joint="joint_leg_left" class="servo_actuator"/>
+
+    <!-- ===== ESP2: HEAD BALLAST BUOYANCY UNIT ===== -->
+    <!-- 4x Head Water-Intake Ballast Servos (Direct 0 to 90 degrees!) -->
+    <general name="ballast_servo_1" joint="joint_ballast_1" class="servo_actuator"/>
+    <general name="ballast_servo_2" joint="joint_ballast_2" class="servo_actuator"/>
+    <general name="ballast_servo_3" joint="joint_ballast_3" class="servo_actuator"/>
+    <general name="ballast_servo_4" joint="joint_ballast_4" class="servo_actuator"/>
+  </actuator>
+
+  <!-- ============================================================ -->
+  <!-- SENSORS DEFINITION                                           -->
+  <!-- ============================================================ -->
+  <sensor>
+    <!-- Orientation Quaternion from IMU (Supports 3D Roll / Pitch / Yaw) -->
+    <framequat name="imu_quat" objtype="site" objname="imu_site"/>
+    <!-- Angular Velocity (Gyro) -->
+    <gyro name="imu_gyro" site="imu_site"/>
+    <!-- Linear Acceleration (Accelerometer) -->
+    <accelerometer name="imu_accel" site="imu_site"/>
+  </sensor>
+</mujoco>

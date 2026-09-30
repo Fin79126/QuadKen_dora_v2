@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+</head>
+
+<body>
+    <div class="mermaid">
+        flowchart TB
+  compute["**compute**"]
+  controller["**controller**"]
+  mujoco_sim["**mujoco_sim**"]
+  visualizer[/"**visualizer**"\]
+subgraph ___dora___ [dora]
+  subgraph ___timer_timer___ [timer]
+    dora/timer/millis/20[\millis/20/]
+    dora/timer/millis/100[\millis/100/]
+  end
+end
+  mujoco_sim -- bno_data --> compute
+  controller -- control_cmd --> compute
+  mujoco_sim -- esp_status --> compute
+  mujoco_sim -- esp_telemetry --> compute
+  dora/timer/millis/100 -- tick --> controller
+  compute -- actuator_cmd --> mujoco_sim
+  dora/timer/millis/20 -- tick --> mujoco_sim
+  mujoco_sim -- bno_data --> visualizer
+  compute -- compute_status --> visualizer
+  controller -- control_cmd --> visualizer
+  mujoco_sim -- esp_status --> visualizer
+  mujoco_sim -- esp_telemetry --> visualizer
+  mujoco_sim -- image --> visualizer
+
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    <script>mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'base' });
+    </script>
+</body>
+
+</html>

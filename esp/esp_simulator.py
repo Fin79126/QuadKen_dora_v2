@@ -1,11 +1,15 @@
 """
-ESP 1 & ESP 2 Microcontroller Simulator
+ESP 1 & ESP 2 Microcontroller Simulator (QuadKen Underwater AUV)
 Simulates the two physical ESPs connected to Raspberry Pi:
-  - ESP1 (Front Legs): TCP 5001, UDP 6001
-  - ESP2 (Rear Legs):  TCP 5002, UDP 6002
+  - ESP1 (Thrust & Drag-Steering): TCP 5001, UDP 6001
+      * 4 Servos: Membrane leg deployment angles [Top, Right, Bottom, Left]
+      * 2 Motors: BLDC forward thrusters
+  - ESP2 (Ballast & Buoyancy): TCP 5002, UDP 6002
+      * 4 Servos: Head water-intake servos
+      * 0 Motors
 Handles:
-  - TCP Server: Accepts connections from RasPi, responds to heartbeat PING with PONG.
-  - UDP Server: Receives actuator commands, simulates servo movement, and sends telemetry.
+  - TCP Server: Responds to heartbeat PING with PONG and battery health.
+  - UDP Server: Receives actuator commands, simulates servo movement, and streams sensor telemetry.
 """
 
 import time
@@ -22,21 +26,33 @@ from config.robot_config import ESP1_CONFIG, ESP2_CONFIG
 
 
 class SingleESPSimulator(threading.Thread):
-    def __init__(self, esp_id: str, name: str, tcp_port: int, udp_port: int, raspi_udp_port: int = 6000):
+    def __init__(
+        self,
+        esp_id: str,
+        name: str,
+        tcp_port: int,
+        udp_port: int,
+        num_servos: int = 4,
+        num_motors: int = 2,
+        raspi_udp_port: int = 6000,
+    ):
         super().__init__(daemon=True)
         self.esp_id = esp_id
         self.name = name
         self.tcp_port = tcp_port
         self.udp_port = udp_port
+        self.num_servos = num_servos
+        self.num_motors = num_motors
         self.raspi_udp_port = raspi_udp_port
 
         # State
         self.running = True
-        self.current_servos = [0.0] * 6
-        self.target_servos = [0.0] * 6
-        self.motors = [0, 0]
-        self.battery_voltage = 12.4
+        self.current_servos = [0.0] * self.num_servos
+        self.target_servos = [0.0] * self.num_servos
+        self.motors = [0] * self.num_motors
+        self.battery_voltage = 12.6
         self.packet_count = 0
+        self.simulated_depth = 1.8
 
     def run(self):
         # 1. Setup TCP Server
@@ -95,7 +111,7 @@ class SingleESPSimulator(threading.Thread):
                                     }
                                     resp_bytes = (json.dumps(pong_resp) + "\n").encode("utf-8")
                                     client_tcp_sock.sendall(resp_bytes)
-                except Exception as e:
+                except Exception:
                     if client_tcp_sock:
                         client_tcp_sock.close()
                         client_tcp_sock = None
@@ -105,7 +121,7 @@ class SingleESPSimulator(threading.Thread):
                 readable, _, _ = select.select([udp_server], [], [], 0.0)
                 if readable:
                     data, addr = udp_server.recvfrom(2048)
-                    raspi_addr = addr  # Auto-learn RasPi UDP address
+                    raspi_addr = addr
                     cmd = json.loads(data.decode("utf-8"))
                     self.target_servos = cmd.get("servos", self.target_servos)
                     self.motors = cmd.get("motors", self.motors)
@@ -115,7 +131,6 @@ class SingleESPSimulator(threading.Thread):
             # D. Smooth servo motion simulation
             for i in range(len(self.current_servos)):
                 if i < len(self.target_servos):
-                    # Simple low-pass filter
                     self.current_servos[i] += 0.3 * (self.target_servos[i] - self.current_servos[i])
 
             # E. Send UDP Telemetry back to RasPi at 50Hz
@@ -123,19 +138,34 @@ class SingleESPSimulator(threading.Thread):
             if now - last_telemetry_time >= 0.02:
                 last_telemetry_time = now
                 self.packet_count += 1
-                # Simulate dynamic current draw based on motor/servo load
-                current_draw = 0.3 + 0.05 * sum(abs(s) for s in self.current_servos) / 90.0
+
+                # Calculate power consumption
+                motor_load = sum(abs(m) for m in self.motors) * 0.05
+                servo_load = sum(abs(s) for s in self.current_servos) * 0.01
+                current_draw = 0.4 + motor_load + servo_load
 
                 telemetry = {
                     "esp_id": self.esp_id,
                     "seq": self.packet_count,
                     "timestamp": now,
-                    "voltage": round(self.battery_voltage - 0.01 * current_draw, 2),
+                    "voltage": round(self.battery_voltage - 0.005 * current_draw, 2),
                     "current": round(current_draw, 2),
                     "actual_servos": [round(float(s), 1) for s in self.current_servos],
                     "actual_motors": self.motors,
-                    "foot_contacts": [1 if abs(self.current_servos[1]) < 10 else 0, 1],
+                    "leak_detected": False,
                 }
+
+                # ESP2 includes water depth and ballast intake percentage
+                if self.esp_id == "esp2":
+                    ballast_opening = (
+                        sum(self.current_servos) / (len(self.current_servos) * 90.0)
+                        if self.current_servos
+                        else 0.0
+                    )
+                    self.simulated_depth = max(0.2, min(10.0, self.simulated_depth + (ballast_opening - 0.45) * 0.01))
+                    telemetry["water_depth_m"] = round(float(self.simulated_depth), 2)
+                    telemetry["ballast_intake_pct"] = round(float(ballast_opening * 100.0), 1)
+
                 try:
                     udp_server.sendto(json.dumps(telemetry).encode("utf-8"), raspi_addr)
                 except Exception:
@@ -146,14 +176,26 @@ class SingleESPSimulator(threading.Thread):
 
 def main():
     print("==================================================")
-    print("      Starting QuadKen Dual-ESP Simulator         ")
+    print("  Starting QuadKen AUV Dual-ESP Simulator        ")
+    print("  ESP1: 2 BLDC Thrusters + 4 Membrane Servos     ")
+    print("  ESP2: 4 Head Water-Intake Ballast Servos       ")
     print("==================================================")
 
     sim_esp1 = SingleESPSimulator(
-        ESP1_CONFIG.esp_id, ESP1_CONFIG.name, ESP1_CONFIG.tcp_port, ESP1_CONFIG.udp_port
+        ESP1_CONFIG.esp_id,
+        ESP1_CONFIG.name,
+        ESP1_CONFIG.tcp_port,
+        ESP1_CONFIG.udp_port,
+        num_servos=ESP1_CONFIG.num_servos,
+        num_motors=ESP1_CONFIG.num_motors,
     )
     sim_esp2 = SingleESPSimulator(
-        ESP2_CONFIG.esp_id, ESP2_CONFIG.name, ESP2_CONFIG.tcp_port, ESP2_CONFIG.udp_port
+        ESP2_CONFIG.esp_id,
+        ESP2_CONFIG.name,
+        ESP2_CONFIG.tcp_port,
+        ESP2_CONFIG.udp_port,
+        num_servos=ESP2_CONFIG.num_servos,
+        num_motors=ESP2_CONFIG.num_motors,
     )
 
     sim_esp1.start()
